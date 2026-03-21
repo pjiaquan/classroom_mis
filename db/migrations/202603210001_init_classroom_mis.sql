@@ -238,6 +238,8 @@ SELECT
       AND created_at < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month'
   ) AS this_month_lead_conversion_pct;
 
+RESET search_path;
+
 -- migrate:down
 
 DROP VIEW IF EXISTS mis.v_dashboard_current;

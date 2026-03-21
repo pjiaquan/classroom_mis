@@ -6,7 +6,8 @@
 *.swp
 *.sql.bak
 BOOTSTRAP_EXPERIMENT_LOG.md
-data/*
+boilerplates/
+data/**
 !data/.gitkeep
 !data/postgres/
 !data/postgres/.gitkeep

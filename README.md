@@ -73,6 +73,7 @@ This project uses bind mounts under the project directory for runtime data:
 Important:
 
 - the business source of truth is PostgreSQL, so `./data/postgres` is the most important path
+- PostgreSQL is configured with `PGDATA=/var/lib/postgresql/data/pgdata`, so the bind-mounted `./data/postgres` directory can safely contain mount-point metadata or a tracked `.gitkeep`
 - `docker compose down` stops containers but keeps these directories and their data
 - `docker compose down -v` does not reset bind-mounted directories
 - if you want a full local reset, you must stop the stack and delete `./data/postgres`, `./data/redis`, and `./data/nocodb`
@@ -127,6 +128,8 @@ At minimum, set strong values for:
 - `NC_ADMIN_PASSWORD`
 - `NC_PUBLIC_URL`
 
+If `.env` is missing, or any required variable is missing, `docker compose` now hard fails during configuration parsing with an explicit error message. It will not continue with blank values.
+
 Default behavior:
 
 - `APP_SCHEMA=mis`
@@ -156,6 +159,22 @@ Then start the current version:
 ```bash
 docker compose up -d --build
 ```
+
+If you previously hit this PostgreSQL error:
+
+```text
+initdb: error: directory "/var/lib/postgresql/data" exists but is not empty
+```
+
+that was caused by trying to initialize PostgreSQL directly in the bind-mounted root. The current compose file avoids that by setting `PGDATA` to a child directory. If the old failed initialization left local files behind, stop the stack and clear `./data/postgres` before starting again.
+
+If you hit this migration error on an older checkout:
+
+```text
+pq: relation "mis.schema_migrations" does not exist
+```
+
+that was caused by the initial migration leaving `search_path` pointed at the business schema, which made `dbmate` look for `schema_migrations` in `mis` instead of `public`. The current migration resets `search_path` before control returns to `dbmate`. If your local database is disposable, clear `./data/postgres` and restart the stack so migrations run cleanly from the beginning.
 
 Check service state:
 
@@ -192,6 +211,8 @@ Sign in with:
 - password: `NC_ADMIN_PASSWORD`
 
 You should already see the auto-created base. No manual base or datasource setup should be needed.
+
+If `bootstrap` exits before creating the base, inspect its logs first. The most common early-start failure is that NocoDB was not yet ready to accept sign-in requests. The stack now waits for the NocoDB healthcheck before starting `bootstrap`, and the bootstrap script retries empty or invalid sign-in responses until the timeout is reached.
 
 ## Operation Matrix
 

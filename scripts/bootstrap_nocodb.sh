@@ -73,7 +73,7 @@ wait_for_signin() {
       --data "$(jq -nc --arg email "$NC_ADMIN_EMAIL" --arg password "$NC_ADMIN_PASSWORD" '{email:$email,password:$password}')" \
       || true)"
 
-    AUTH_TOKEN="$(printf '%s' "$response" | jq -r '.token // empty')"
+    AUTH_TOKEN="$(printf '%s' "$response" | jq -r '.token // empty' 2>/dev/null || true)"
     if [[ -n "$AUTH_TOKEN" && "$AUTH_TOKEN" != "null" ]]; then
       log "NocoDB sign-in succeeded."
       return 0
