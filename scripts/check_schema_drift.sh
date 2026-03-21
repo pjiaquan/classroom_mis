@@ -24,6 +24,12 @@ source .env
 set +a
 
 APP_SCHEMA="${APP_SCHEMA:-mis}"
+APP_POSTGRES_DB="${APP_POSTGRES_DB:-}"
+
+if [[ -z "$APP_POSTGRES_DB" ]]; then
+  echo "APP_POSTGRES_DB is not set in .env." >&2
+  exit 1
+fi
 
 if [[ ! -f "$SNAPSHOT_FILE" ]]; then
   echo "Schema snapshot not found: $SNAPSHOT_FILE" >&2
@@ -41,7 +47,7 @@ normalize_dump() {
 }
 
 docker compose exec -T -e APP_SCHEMA="$APP_SCHEMA" postgres sh -lc \
-  'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --schema="$APP_SCHEMA" --schema-only --no-owner --no-privileges' \
+  'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -U "$POSTGRES_USER" -d "$APP_POSTGRES_DB" --schema="$APP_SCHEMA" --schema-only --no-owner --no-privileges' \
   | normalize_dump > "$LIVE_FILE"
 
 if diff -u "$SNAPSHOT_FILE" "$LIVE_FILE" > "$DIFF_FILE"; then

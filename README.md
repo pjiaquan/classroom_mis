@@ -6,24 +6,28 @@ This repository is designed so that `docker compose up -d --build` brings up:
 - Redis
 - dbmate migrations
 - NocoDB
-- an automatic bootstrap job that creates or reuses the NocoDB base, binds it to PostgreSQL, and triggers metadata sync
+- an automatic bootstrap job that creates or reuses the NocoDB base, binds it to the business PostgreSQL database, and triggers metadata sync
 
-The source of truth is still PostgreSQL. NocoDB is an interface on top of the SQL schema.
+The source of truth is still PostgreSQL. NocoDB is an interface on top of the SQL schema, but it now uses a separate internal metadata database so that base sync no longer imports `nc_*` tables.
 
 ## What is automated
 
 On a fresh startup, the stack automatically does all of the following:
 
-1. applies SQL migrations
-2. creates the business schema in PostgreSQL as `mis`
-3. starts NocoDB with the admin account from `.env`
-4. signs in to NocoDB through the API
-5. finds the default workspace
-6. creates or reuses the base named by `NOCODB_BASE_TITLE`
-7. creates or reuses the PostgreSQL integration named by `NOCODB_INTEGRATION_TITLE`
-8. rebinds the base source to PostgreSQL schema `APP_SCHEMA`
-9. clears NocoDB metadata cache
-10. runs metadata sync until business tables are visible
+1. initializes PostgreSQL with two databases:
+   - `POSTGRES_DB` for NocoDB internal metadata
+   - `APP_POSTGRES_DB` for business tables
+2. applies SQL migrations to `APP_POSTGRES_DB`
+3. creates the business schema in PostgreSQL as `mis`
+4. starts NocoDB with the admin account from `.env`
+5. signs in to NocoDB through the API
+6. finds the default workspace
+7. creates or reuses the base named by `NOCODB_BASE_TITLE`
+8. creates or reuses the PostgreSQL integration named by `NOCODB_INTEGRATION_TITLE`
+9. rebinds the base source to PostgreSQL database `APP_POSTGRES_DB` and schema `APP_SCHEMA`
+10. sets the PostgreSQL role search path for `APP_POSTGRES_DB` to `APP_SCHEMA`
+11. clears NocoDB metadata cache
+12. runs metadata sync until business tables are visible
 
 No manual NocoDB UI bootstrap is required for:
 
@@ -54,6 +58,7 @@ After bootstrap, the tables and SQL views are already visible in NocoDB. If you 
 
 - `docker-compose.yml`: containers and startup order
 - `.env.example`: required environment variables
+- `postgres/initdb`: first-start PostgreSQL database initialization scripts
 - `bootstrap/Dockerfile`: image used by the bootstrap job
 - `scripts/bootstrap_nocodb.sh`: automatic NocoDB base and source bootstrap
 - `db/migrations`: SQL migrations
@@ -73,6 +78,9 @@ This project uses bind mounts under the project directory for runtime data:
 Important:
 
 - the business source of truth is PostgreSQL, so `./data/postgres` is the most important path
+- the same PostgreSQL cluster contains two databases:
+  - `POSTGRES_DB` for NocoDB internal metadata
+  - `APP_POSTGRES_DB` for business tables scanned by NocoDB
 - PostgreSQL is configured with `PGDATA=/var/lib/postgresql/data/pgdata`, so the bind-mounted `./data/postgres` directory can safely contain mount-point metadata or a tracked `.gitkeep`
 - `docker compose down` stops containers but keeps these directories and their data
 - `docker compose down -v` does not reset bind-mounted directories
@@ -132,6 +140,8 @@ If `.env` is missing, or any required variable is missing, `docker compose` now 
 
 Default behavior:
 
+- `POSTGRES_DB=nocodb`
+- `APP_POSTGRES_DB=classroom_mis`
 - `APP_SCHEMA=mis`
 - `POSTGRES_HOST=postgres`
 - `POSTGRES_PORT=5432`
@@ -148,10 +158,29 @@ NC_PUBLIC_URL=http://localhost:8080
 
 ## First run
 
-If you previously started an older version of this repository that stored the classroom tables in `public`, first stop the old stack and remove the old state:
+Important upgrade warning:
+
+- if you are upgrading from any earlier checkout that used a single PostgreSQL database for both NocoDB metadata and classroom tables, you must reset `./data/postgres` and `./data/nocodb`
+- changing `.env` alone is not enough, because `POSTGRES_USER`, `POSTGRES_DB`, and the `postgres/initdb` scripts only apply when PostgreSQL initializes a brand new data directory
+- if you reuse the old PostgreSQL data directory, services may hang or fail with errors such as:
+  - `role "nocodb" does not exist`
+  - only `nc_*` tables appear in the auto-created base
+
+If you previously started an older version of this repository that used a single PostgreSQL database for both NocoDB metadata and classroom tables, first stop the old stack and remove the old state:
 
 ```bash
 docker compose down
+```
+
+Then delete at least `./data/postgres` and `./data/nocodb` before starting again. The new dual-database layout is applied only during PostgreSQL cluster initialization.
+
+Recommended reset sequence for that upgrade:
+
+```bash
+docker compose down
+rm -rf data/postgres data/nocodb
+mkdir -p data/postgres data/nocodb
+docker compose up -d --build
 ```
 
 Then start the current version:
@@ -159,6 +188,10 @@ Then start the current version:
 ```bash
 docker compose up -d --build
 ```
+
+For a fresh environment or any full reset, use only `docker compose up -d --build`.
+
+Do not use `docker compose run --rm bootstrap` as a substitute for first startup validation. That command is for metadata rebinding or debugging on an already initialized environment, and it can pull `migrate` into the dependency chain again.
 
 If you previously hit this PostgreSQL error:
 
@@ -214,6 +247,10 @@ You should already see the auto-created base. No manual base or datasource setup
 
 If `bootstrap` exits before creating the base, inspect its logs first. The most common early-start failure is that NocoDB was not yet ready to accept sign-in requests. The stack now waits for the NocoDB healthcheck before starting `bootstrap`, and the bootstrap script retries empty or invalid sign-in responses until the timeout is reached.
 
+If you see a base but only `nc_*` tables, you are almost certainly still using an old single-database PostgreSQL data directory. Reset `./data/postgres` and `./data/nocodb` so PostgreSQL can recreate the separate internal and business databases from scratch.
+
+If you see only `schema_migrations`, the integration is reaching the business database but PostgreSQL is still exposing only the default `public` schema to the NocoDB connection role. The bootstrap job now sets the role-level `search_path` to `APP_SCHEMA`, but any environment initialized before that change should be reset and started again.
+
 ## Operation Matrix
 
 | Scenario | Commands to run | Extra manual action | What to confirm |
@@ -226,6 +263,11 @@ If `bootstrap` exits before creating the base, inspect its logs first. The most 
 | Update tracked schema snapshot after validated schema change | `bash scripts/update_schema_snapshot.sh` | Commit the updated snapshot file if you use git | `db/schema.snapshot.sql` matches the current business schema |
 | Check schema drift | `bash scripts/check_schema_drift.sh` | none | Command exits successfully with `No schema drift detected.` |
 | Reset a disposable local test environment | `docker compose down` then delete `data/` and run `docker compose up -d --build` | Only do this if you are okay deleting local bind-mounted data | Fresh stack recreates the schema, base, and sync state automatically |
+
+Important:
+
+- do not use `docker compose run --rm bootstrap` for fresh-environment validation
+- use `docker compose run --rm bootstrap` only after the environment is already initialized and you specifically need to rebind metadata or debug bootstrap behavior
 
 ## What happens on startup
 

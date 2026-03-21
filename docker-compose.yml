@@ -5,6 +5,7 @@ services:
     restart: unless-stopped
     environment:
       APP_SCHEMA: ${APP_SCHEMA:?APP_SCHEMA is required. Copy .env.example to .env and set APP_SCHEMA.}
+      APP_POSTGRES_DB: ${APP_POSTGRES_DB:?APP_POSTGRES_DB is required. Copy .env.example to .env and set APP_POSTGRES_DB.}
       PGDATA: /var/lib/postgresql/data/pgdata
       POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required. Copy .env.example to .env and set POSTGRES_DB.}
       POSTGRES_HOST: ${POSTGRES_HOST:?POSTGRES_HOST is required. Copy .env.example to .env and set POSTGRES_HOST.}
@@ -14,6 +15,7 @@ services:
       TZ: ${TZ:?TZ is required. Copy .env.example to .env and set TZ.}
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
+      - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:?POSTGRES_USER is required.} -d ${POSTGRES_DB:?POSTGRES_DB is required.}"]
       interval: 10s
@@ -39,7 +41,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required. Copy .env.example to .env and set DATABASE_URL.}
+      DATABASE_URL: postgres://${POSTGRES_USER:?POSTGRES_USER is required.}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required.}@${POSTGRES_HOST:?POSTGRES_HOST is required.}:${POSTGRES_PORT:?POSTGRES_PORT is required.}/${APP_POSTGRES_DB:?APP_POSTGRES_DB is required.}?sslmode=disable
     command: ["--wait", "--wait-timeout", "120s", "--migrations-dir", "/db/migrations", "--no-dump-schema", "up"]
     volumes:
       - ./db:/db:ro
@@ -91,6 +93,7 @@ services:
         condition: service_healthy
     environment:
       APP_SCHEMA: ${APP_SCHEMA:?APP_SCHEMA is required. Copy .env.example to .env and set APP_SCHEMA.}
+      APP_POSTGRES_DB: ${APP_POSTGRES_DB:?APP_POSTGRES_DB is required. Copy .env.example to .env and set APP_POSTGRES_DB.}
       NC_ADMIN_EMAIL: ${NC_ADMIN_EMAIL:?NC_ADMIN_EMAIL is required. Copy .env.example to .env and set NC_ADMIN_EMAIL.}
       NC_ADMIN_PASSWORD: ${NC_ADMIN_PASSWORD:?NC_ADMIN_PASSWORD is required. Copy .env.example to .env and set NC_ADMIN_PASSWORD.}
       NOCODB_BASE_TITLE: ${NOCODB_BASE_TITLE:?NOCODB_BASE_TITLE is required. Copy .env.example to .env and set NOCODB_BASE_TITLE.}

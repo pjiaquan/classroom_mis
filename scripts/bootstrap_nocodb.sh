@@ -91,6 +91,7 @@ wait_for_signin() {
 
 require_env \
   APP_SCHEMA \
+  APP_POSTGRES_DB \
   NC_ADMIN_EMAIL \
   NC_ADMIN_PASSWORD \
   NOCODB_BASE_TITLE \
@@ -109,7 +110,7 @@ wait_for_signin
 
 WORKSPACE_ID="$(
   curl -fsS "$NOCODB_INTERNAL_URL/api/v1/workspaces" -H "xc-auth: $AUTH_TOKEN" \
-    | jq -r '.[0].id // .list[0].id // empty'
+    | jq -r 'if type == "array" then .[0].id // empty else .list[0].id // empty end'
 )"
 
 if [[ -z "$WORKSPACE_ID" ]]; then
@@ -118,6 +119,9 @@ if [[ -z "$WORKSPACE_ID" ]]; then
 fi
 
 log "Using workspace $WORKSPACE_ID."
+
+log "Setting PostgreSQL search_path for role '$POSTGRES_USER' on database '$APP_POSTGRES_DB' to '$APP_SCHEMA'."
+psql_exec "ALTER ROLE \"$POSTGRES_USER\" IN DATABASE \"$APP_POSTGRES_DB\" SET search_path TO \"$APP_SCHEMA\";"
 
 BASE_TITLE_SQL="$(sql_escape "$NOCODB_BASE_TITLE")"
 INTEGRATION_TITLE_SQL="$(sql_escape "$NOCODB_INTEGRATION_TITLE")"
@@ -161,7 +165,7 @@ if [[ -z "$INTEGRATION_ID" ]]; then
       --arg port "$POSTGRES_PORT" \
       --arg user "$POSTGRES_USER" \
       --arg password "$POSTGRES_PASSWORD" \
-      --arg database "$POSTGRES_DB" \
+      --arg database "$APP_POSTGRES_DB" \
       '{
         type:"database",
         sub_type:"pg",
@@ -194,7 +198,7 @@ INTEGRATION_CONFIG_JSON="$(jq -nc \
   --arg port "$POSTGRES_PORT" \
   --arg user "$POSTGRES_USER" \
   --arg password "$POSTGRES_PASSWORD" \
-  --arg database "$POSTGRES_DB" \
+  --arg database "$APP_POSTGRES_DB" \
   '{
     client:"pg",
     connection:{
@@ -223,7 +227,7 @@ if [[ -z "$SOURCE_ID" ]]; then
   exit 1
 fi
 
-log "Rebinding source $SOURCE_ID to PostgreSQL schema '$APP_SCHEMA'."
+log "Rebinding source $SOURCE_ID to PostgreSQL database '$APP_POSTGRES_DB' schema '$APP_SCHEMA'."
 
 api_call PATCH "/api/v1/db/meta/projects/$BASE_ID/bases/$SOURCE_ID" "$(jq -nc \
   --arg integration_id "$INTEGRATION_ID" \
