@@ -18,7 +18,7 @@ On a fresh startup, the stack automatically does all of the following:
    - `POSTGRES_DB` for NocoDB internal metadata
    - `APP_POSTGRES_DB` for business tables
 2. applies SQL migrations to `APP_POSTGRES_DB`
-3. creates the business schema in PostgreSQL as `mis`
+3. creates business tables in `APP_SCHEMA` inside `APP_POSTGRES_DB`
 4. starts NocoDB with the admin account from `.env`
 5. signs in to NocoDB through the API
 6. finds the default workspace
@@ -142,7 +142,7 @@ Default behavior:
 
 - `POSTGRES_DB=nocodb`
 - `APP_POSTGRES_DB=classroom_mis`
-- `APP_SCHEMA=mis`
+- `APP_SCHEMA=public`
 - `POSTGRES_HOST=postgres`
 - `POSTGRES_PORT=5432`
 - `NOCODB_INTERNAL_URL=http://nocodb:8080`
@@ -201,13 +201,7 @@ initdb: error: directory "/var/lib/postgresql/data" exists but is not empty
 
 that was caused by trying to initialize PostgreSQL directly in the bind-mounted root. The current compose file avoids that by setting `PGDATA` to a child directory. If the old failed initialization left local files behind, stop the stack and clear `./data/postgres` before starting again.
 
-If you hit this migration error on an older checkout:
-
-```text
-pq: relation "mis.schema_migrations" does not exist
-```
-
-that was caused by the initial migration leaving `search_path` pointed at the business schema, which made `dbmate` look for `schema_migrations` in `mis` instead of `public`. The current migration resets `search_path` before control returns to `dbmate`. If your local database is disposable, clear `./data/postgres` and restart the stack so migrations run cleanly from the beginning.
+If you hit migration replay or duplicate-table problems on an older checkout, the current stack avoids that by forcing `dbmate` to use `public.schema_migrations` regardless of `APP_SCHEMA`. If your local database is disposable, clear `./data/postgres` and restart the stack so migrations run cleanly from the beginning.
 
 Check service state:
 
@@ -249,7 +243,44 @@ If `bootstrap` exits before creating the base, inspect its logs first. The most 
 
 If you see a base but only `nc_*` tables, you are almost certainly still using an old single-database PostgreSQL data directory. Reset `./data/postgres` and `./data/nocodb` so PostgreSQL can recreate the separate internal and business databases from scratch.
 
-If you see only `schema_migrations`, the integration is reaching the business database but PostgreSQL is still exposing only the default `public` schema to the NocoDB connection role. The bootstrap job now sets the role-level `search_path` to `APP_SCHEMA`, but any environment initialized before that change should be reset and started again.
+If you see only `schema_migrations`, the integration is reaching the business database but NocoDB has not exposed the application tables yet. In the current layout, business tables live in `APP_SCHEMA` and `dbmate` still keeps its migration ledger in `public.schema_migrations`.
+
+If NocoDB still shows only `schema_migrations`, do not try to salvage that base by hand from the UI. Recreate the environment with a clean bootstrap instead:
+
+```bash
+docker compose down
+rm -rf data/postgres data/nocodb
+mkdir -p data/postgres data/nocodb
+docker compose up -d --build
+```
+
+Then verify:
+
+```bash
+docker compose ps
+docker compose logs migrate
+docker compose logs bootstrap
+docker compose logs nocodb
+```
+
+And confirm the business database contains the expected tables:
+
+```bash
+docker exec classroom-mis-postgres \
+  psql -U nocodb -d classroom_mis -Atqc \
+  "select schemaname || '.' || tablename from pg_tables where schemaname in ('public') order by 1;"
+```
+
+Expected result includes:
+
+- `public.students`
+- `public.classes`
+- `public.enrollments`
+- `public.attendance_sessions`
+- `public.attendance`
+- `public.payments`
+- `public.leads`
+- `public.schema_migrations`
 
 ## Operation Matrix
 
@@ -268,6 +299,7 @@ Important:
 
 - do not use `docker compose run --rm bootstrap` for fresh-environment validation
 - use `docker compose run --rm bootstrap` only after the environment is already initialized and you specifically need to rebind metadata or debug bootstrap behavior
+- `migrate` is intentionally forced to use `public.schema_migrations`, even when `APP_SCHEMA` is not `public`
 
 ## What happens on startup
 
@@ -277,7 +309,7 @@ The startup order is:
 2. `redis` starts
 3. `migrate` waits for PostgreSQL and applies SQL files from `db/migrations`
 4. `nocodb` starts after migrations succeed
-5. `bootstrap` signs in to NocoDB, binds the base to PostgreSQL schema `mis`, and waits for business tables to appear
+5. `bootstrap` signs in to NocoDB, binds the base to PostgreSQL schema `APP_SCHEMA`, and waits for business tables to appear
 
 ## Expected service states
 
@@ -301,7 +333,7 @@ Confirm all of the following:
 - `bootstrap` exited with code `0`
 - NocoDB admin login works
 - the base named by `NOCODB_BASE_TITLE` exists automatically
-- the imported tables are from schema `mis`, not NocoDB metadata tables
+- the imported tables are from `APP_SCHEMA` and not from NocoDB metadata tables
 - these tables are visible:
   - `students`
   - `classes`
@@ -430,5 +462,6 @@ If you changed old test data that lived in `public`, stop the stack, remove the 
 
 ```bash
 docker compose down
+rm -rf data/postgres data/nocodb
 docker compose up -d --build
 ```

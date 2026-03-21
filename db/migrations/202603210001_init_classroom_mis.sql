@@ -1,8 +1,5 @@
 -- migrate:up
 
-CREATE SCHEMA IF NOT EXISTS mis;
-SET search_path TO mis, public;
-
 CREATE TABLE students (
   id BIGSERIAL PRIMARY KEY,
   student_code TEXT NOT NULL UNIQUE,
@@ -238,31 +235,27 @@ SELECT
       AND created_at < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month'
   ) AS this_month_lead_conversion_pct;
 
-RESET search_path;
-
 -- migrate:down
 
-DROP VIEW IF EXISTS mis.v_dashboard_current;
-DROP VIEW IF EXISTS mis.v_lead_conversion;
-DROP VIEW IF EXISTS mis.v_monthly_revenue;
-DROP VIEW IF EXISTS mis.v_class_current_sizes;
+DROP VIEW IF EXISTS v_dashboard_current;
+DROP VIEW IF EXISTS v_lead_conversion;
+DROP VIEW IF EXISTS v_monthly_revenue;
+DROP VIEW IF EXISTS v_class_current_sizes;
 
-DROP TRIGGER IF EXISTS trg_leads_updated_at ON mis.leads;
-DROP TRIGGER IF EXISTS trg_payments_updated_at ON mis.payments;
-DROP TRIGGER IF EXISTS trg_attendance_updated_at ON mis.attendance;
-DROP TRIGGER IF EXISTS trg_attendance_sessions_updated_at ON mis.attendance_sessions;
-DROP TRIGGER IF EXISTS trg_enrollments_updated_at ON mis.enrollments;
-DROP TRIGGER IF EXISTS trg_classes_updated_at ON mis.classes;
-DROP TRIGGER IF EXISTS trg_students_updated_at ON mis.students;
+DROP TRIGGER IF EXISTS trg_leads_updated_at ON leads;
+DROP TRIGGER IF EXISTS trg_payments_updated_at ON payments;
+DROP TRIGGER IF EXISTS trg_attendance_updated_at ON attendance;
+DROP TRIGGER IF EXISTS trg_attendance_sessions_updated_at ON attendance_sessions;
+DROP TRIGGER IF EXISTS trg_enrollments_updated_at ON enrollments;
+DROP TRIGGER IF EXISTS trg_classes_updated_at ON classes;
+DROP TRIGGER IF EXISTS trg_students_updated_at ON students;
 
-DROP FUNCTION IF EXISTS mis.set_updated_at();
+DROP FUNCTION IF EXISTS set_updated_at();
 
-DROP TABLE IF EXISTS mis.leads;
-DROP TABLE IF EXISTS mis.payments;
-DROP TABLE IF EXISTS mis.attendance;
-DROP TABLE IF EXISTS mis.attendance_sessions;
-DROP TABLE IF EXISTS mis.enrollments;
-DROP TABLE IF EXISTS mis.classes;
-DROP TABLE IF EXISTS mis.students;
-
-DROP SCHEMA IF EXISTS mis;
+DROP TABLE IF EXISTS leads;
+DROP TABLE IF EXISTS payments;
+DROP TABLE IF EXISTS attendance;
+DROP TABLE IF EXISTS attendance_sessions;
+DROP TABLE IF EXISTS enrollments;
+DROP TABLE IF EXISTS classes;
+DROP TABLE IF EXISTS students;

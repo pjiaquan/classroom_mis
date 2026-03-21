@@ -41,7 +41,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:?POSTGRES_USER is required.}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required.}@${POSTGRES_HOST:?POSTGRES_HOST is required.}:${POSTGRES_PORT:?POSTGRES_PORT is required.}/${APP_POSTGRES_DB:?APP_POSTGRES_DB is required.}?sslmode=disable
+      DATABASE_URL: postgres://${POSTGRES_USER:?POSTGRES_USER is required.}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required.}@${POSTGRES_HOST:?POSTGRES_HOST is required.}:${POSTGRES_PORT:?POSTGRES_PORT is required.}/${APP_POSTGRES_DB:?APP_POSTGRES_DB is required.}?sslmode=disable&options=-csearch_path%3Dpublic
     command: ["--wait", "--wait-timeout", "120s", "--migrations-dir", "/db/migrations", "--no-dump-schema", "up"]
     volumes:
       - ./db:/db:ro

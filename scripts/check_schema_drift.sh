@@ -23,7 +23,7 @@ set -a
 source .env
 set +a
 
-APP_SCHEMA="${APP_SCHEMA:-mis}"
+APP_SCHEMA="${APP_SCHEMA:-public}"
 APP_POSTGRES_DB="${APP_POSTGRES_DB:-}"
 
 if [[ -z "$APP_POSTGRES_DB" ]]; then
