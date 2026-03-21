@@ -5,3 +5,5 @@
 *.tmp
 *.swp
 *.sql.bak
+BOOTSTRAP_EXPERIMENT_LOG.md
+data/

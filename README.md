@@ -62,6 +62,44 @@ After bootstrap, the tables and SQL views are already visible in NocoDB. If you 
 - `scripts/update_schema_snapshot.sh`: refresh tracked schema snapshot from live PostgreSQL
 - `scripts/check_schema_drift.sh`: detect schema drift for the business schema
 
+## Persistent data and paths
+
+This project uses bind mounts under the project directory for runtime data:
+
+- `./data/postgres`: PostgreSQL data files
+- `./data/redis`: Redis persistence
+- `./data/nocodb`: NocoDB app data stored on the host
+
+Important:
+
+- the business source of truth is PostgreSQL, so `./data/postgres` is the most important path
+- `docker compose down` stops containers but keeps these directories and their data
+- `docker compose down -v` does not reset bind-mounted directories
+- if you want a full local reset, you must stop the stack and delete `./data/postgres`, `./data/redis`, and `./data/nocodb`
+
+The repository files are mounted or copied from these paths:
+
+- [docker-compose.yml](/home/risc4/workspace/projects/classroom_mis/docker-compose.yml): service definitions
+- [db](/home/risc4/workspace/projects/classroom_mis/db): SQL migrations and schema snapshot
+- [scripts](/home/risc4/workspace/projects/classroom_mis/scripts): bootstrap and maintenance scripts
+- [bootstrap](/home/risc4/workspace/projects/classroom_mis/bootstrap): bootstrap container build context
+- [data](/home/risc4/workspace/projects/classroom_mis/data): local bind-mounted runtime data, created by Docker on first run
+
+You can inspect these directories directly on the host after the first run, for example:
+
+```bash
+ls -la data
+ls -la data/postgres
+ls -la data/nocodb
+```
+
+If you need file-level backups, back up at least:
+
+- the PostgreSQL database using `pg_dump`
+- the `.env` file kept on that machine
+- the git repository contents
+- the `data/` directory if you want full local-state recovery
+
 ## Prerequisites
 
 Before the first run, make sure the host has:
@@ -107,10 +145,10 @@ NC_PUBLIC_URL=http://localhost:8080
 
 ## First run
 
-If you previously started an older version of this repository that stored the classroom tables in `public`, remove the old volumes first:
+If you previously started an older version of this repository that stored the classroom tables in `public`, first stop the old stack and remove the old state:
 
 ```bash
-docker compose down -v
+docker compose down
 ```
 
 Then start the current version:
@@ -166,7 +204,7 @@ You should already see the auto-created base. No manual base or datasource setup
 | Existing environment, changed only NocoDB metadata binding needs refresh | `docker compose run --rm bootstrap` | none | Base still points to schema `APP_SCHEMA` and tables are visible |
 | Update tracked schema snapshot after validated schema change | `bash scripts/update_schema_snapshot.sh` | Commit the updated snapshot file if you use git | `db/schema.snapshot.sql` matches the current business schema |
 | Check schema drift | `bash scripts/check_schema_drift.sh` | none | Command exits successfully with `No schema drift detected.` |
-| Reset a disposable local test environment | `docker compose down -v` then `docker compose up -d --build` | Only do this if you are okay deleting local volumes | Fresh stack recreates the schema, base, and sync state automatically |
+| Reset a disposable local test environment | `docker compose down` then delete `data/` and run `docker compose up -d --build` | Only do this if you are okay deleting local bind-mounted data | Fresh stack recreates the schema, base, and sync state automatically |
 
 ## What happens on startup
 
@@ -270,10 +308,10 @@ Stop:
 docker compose down
 ```
 
-Stop and remove volumes:
+Stop the stack:
 
 ```bash
-docker compose down -v
+docker compose down
 ```
 
 Restart NocoDB:
@@ -325,9 +363,9 @@ If `bootstrap` fails, inspect:
 docker compose logs bootstrap
 ```
 
-If you changed old test data that lived in `public`, reset the environment:
+If you changed old test data that lived in `public`, stop the stack, remove the local bind-mounted data, and start again:
 
 ```bash
-docker compose down -v
+docker compose down
 docker compose up -d --build
 ```
