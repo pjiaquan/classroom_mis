@@ -6,4 +6,11 @@
 *.swp
 *.sql.bak
 BOOTSTRAP_EXPERIMENT_LOG.md
-data/
+data/*
+!data/.gitkeep
+!data/postgres/
+!data/postgres/.gitkeep
+!data/redis/
+!data/redis/.gitkeep
+!data/nocodb/
+!data/nocodb/.gitkeep
