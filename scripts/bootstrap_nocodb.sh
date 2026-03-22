@@ -116,6 +116,28 @@ resolve_app_schema() {
   log "Using configured business schema '$RESOLVED_APP_SCHEMA'."
 }
 
+localized_model_title_values() {
+  cat <<'SQL'
+        ('students', '學生'),
+        ('classes', '班級'),
+        ('enrollments', '報名紀錄'),
+        ('attendance_sessions', '課程場次'),
+        ('attendance', '出席紀錄'),
+        ('payments', '繳費紀錄'),
+        ('leads', '潛在客戶'),
+        ('form_definitions', '表單定義'),
+        ('form_fields', '表單欄位'),
+        ('form_field_options', '表單欄位選項'),
+        ('form_submissions', '表單送出紀錄'),
+        ('submission_files', '表單附件'),
+        ('v_class_current_sizes', '班級目前人數'),
+        ('v_monthly_revenue', '每月營收'),
+        ('v_lead_conversion', '潛在客戶轉換'),
+        ('v_dashboard_current', '目前儀表板'),
+        ('schema_migrations', '結構版本紀錄')
+SQL
+}
+
 ensure_localized_table_titles() {
   local base_id_sql
   local source_id_sql
@@ -128,14 +150,7 @@ ensure_localized_table_titles() {
   psql_exec "
     WITH localized_tables(table_name, localized_title) AS (
       VALUES
-        ('students', '學生'),
-        ('classes', '班級'),
-        ('enrollments', '報名紀錄'),
-        ('attendance_sessions', '課程場次'),
-        ('attendance', '出席紀錄'),
-        ('payments', '繳費紀錄'),
-        ('leads', '潛在客戶'),
-        ('schema_migrations', '結構版本紀錄')
+$(localized_model_title_values)
     )
     UPDATE nc_models_v2 m
     SET title = lt.localized_title,
@@ -148,14 +163,7 @@ ensure_localized_table_titles() {
 
     WITH localized_tables(table_name, localized_title) AS (
       VALUES
-        ('students', '學生'),
-        ('classes', '班級'),
-        ('enrollments', '報名紀錄'),
-        ('attendance_sessions', '課程場次'),
-        ('attendance', '出席紀錄'),
-        ('payments', '繳費紀錄'),
-        ('leads', '潛在客戶'),
-        ('schema_migrations', '結構版本紀錄')
+$(localized_model_title_values)
     )
     UPDATE nc_views_v2 v
     SET title = lt.localized_title,
@@ -758,17 +766,68 @@ fi
 deadline=$(( $(date +%s) + NOCODB_BOOTSTRAP_TIMEOUT_SECONDS ))
 while true; do
   TABLES_RESPONSE="$(api_call GET "/api/v1/db/meta/projects/$BASE_ID/$SOURCE_ID/tables" "")"
-  if printf '%s' "$TABLES_RESPONSE" | grep -q '"students"'; then
+  LOCALIZED_MODEL_SYNC_STATUS="$(
+    psql_query "WITH localized_tables(table_name, localized_title) AS (
+      VALUES
+$(localized_model_title_values)
+    )
+    SELECT
+      COUNT(*) FILTER (
+        WHERE m.table_name IS NOT NULL
+      )::text || '/' || COUNT(*)::text
+    FROM localized_tables lt
+    LEFT JOIN nc_models_v2 m
+      ON m.table_name = lt.table_name
+     AND m.base_id = '$(sql_escape "$BASE_ID")'
+     AND m.source_id = '$(sql_escape "$SOURCE_ID")';"
+  )"
+
+  if [[ "$LOCALIZED_MODEL_SYNC_STATUS" == */* ]]; then
+    LOCALIZED_MODEL_COUNT="${LOCALIZED_MODEL_SYNC_STATUS%/*}"
+    EXPECTED_LOCALIZED_MODEL_COUNT="${LOCALIZED_MODEL_SYNC_STATUS#*/}"
+  else
+    LOCALIZED_MODEL_COUNT="0"
+    EXPECTED_LOCALIZED_MODEL_COUNT="0"
+  fi
+
+  if [[ "$LOCALIZED_MODEL_COUNT" == "$EXPECTED_LOCALIZED_MODEL_COUNT" ]]; then
     ensure_localized_table_titles
-    ensure_single_select_fields
-    ensure_leads_form_view
-    api_call DELETE "/api/v1/db/meta/cache" >/dev/null
-    log "Bootstrap completed. Business tables, curated single-select fields, and the curated leads form are visible in NocoDB."
-    exit 0
+    LOCALIZED_TITLE_SYNC_STATUS="$(
+      psql_query "WITH localized_tables(table_name, localized_title) AS (
+        VALUES
+$(localized_model_title_values)
+      )
+      SELECT
+        COUNT(*) FILTER (
+          WHERE m.title = lt.localized_title
+        )::text || '/' || COUNT(*)::text
+      FROM localized_tables lt
+      LEFT JOIN nc_models_v2 m
+        ON m.table_name = lt.table_name
+       AND m.base_id = '$(sql_escape "$BASE_ID")'
+       AND m.source_id = '$(sql_escape "$SOURCE_ID")';"
+    )"
+
+    if [[ "$LOCALIZED_TITLE_SYNC_STATUS" == */* ]]; then
+      LOCALIZED_TITLE_COUNT="${LOCALIZED_TITLE_SYNC_STATUS%/*}"
+      EXPECTED_LOCALIZED_TITLE_COUNT="${LOCALIZED_TITLE_SYNC_STATUS#*/}"
+    else
+      LOCALIZED_TITLE_COUNT="0"
+      EXPECTED_LOCALIZED_TITLE_COUNT="0"
+    fi
+
+    if [[ "$LOCALIZED_TITLE_COUNT" == "$EXPECTED_LOCALIZED_TITLE_COUNT" ]]; then
+      ensure_single_select_fields
+      ensure_leads_form_view
+      api_call DELETE "/api/v1/db/meta/cache" >/dev/null
+      log "Bootstrap completed. Business tables, curated single-select fields, and the curated leads form are visible in NocoDB."
+      exit 0
+    fi
   fi
 
   if (( $(date +%s) >= deadline )); then
     echo "Timed out waiting for NocoDB meta sync to expose the business tables." >&2
+    echo "Expected localized models: $EXPECTED_LOCALIZED_MODEL_COUNT, observed: $LOCALIZED_MODEL_COUNT" >&2
     echo "$TABLES_RESPONSE" >&2
     exit 1
   fi

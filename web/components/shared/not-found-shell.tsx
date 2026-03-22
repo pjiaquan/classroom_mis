@@ -9,14 +9,14 @@ const copy = {
     languageLabel: "語言",
     tag: "找不到頁面",
     title: "目前找不到這份表單。",
-    body: "請確認表單網址是否正確，或先在管理介面中發布這份表單。",
+    body: "請確認表單網址是否正確，或返回首頁重新開啟可用表單。",
     backHome: "返回首頁",
   },
   en: {
     languageLabel: "Language",
     tag: "Not Found",
     title: "This form does not exist.",
-    body: "Check the form slug or publish the form in the admin builder first.",
+    body: "Check the form slug or go back home and open an available form.",
     backHome: "Back home",
   },
 } as const;

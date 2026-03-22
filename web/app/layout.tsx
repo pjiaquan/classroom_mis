@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Classroom MIS Forms",
-  description: "Public forms and admin builder for Classroom MIS.",
+  description: "Public forms for Classroom MIS.",
 };
 
 export default function RootLayout({

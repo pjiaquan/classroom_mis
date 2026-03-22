@@ -76,3 +76,11 @@ export type SubmissionStoredFile = {
   fileSizeBytes: number;
   publicUrl: string;
 };
+
+export type SubmissionPendingFile = {
+  fieldKey: string;
+  file: File;
+  originalFilename: string;
+  mimeType: string;
+  fileSizeBytes: number;
+};

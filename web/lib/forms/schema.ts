@@ -5,19 +5,13 @@ export function buildSubmissionSchema(form: PublicFormDefinition) {
   const shape: Record<string, z.ZodTypeAny> = {};
 
   for (const field of form.fields) {
+    if (field.fieldType === "image" || field.fieldType === "file") {
+      continue;
+    }
+
     let schema: z.ZodTypeAny;
 
-    if (field.fieldType === "image" || field.fieldType === "file") {
-      schema = z
-        .object({
-          storageKey: z.string(),
-          originalFilename: z.string(),
-          mimeType: z.string(),
-          fileSizeBytes: z.number().nonnegative(),
-          publicUrl: z.string(),
-        })
-        .optional();
-    } else if (field.fieldType === "checkbox") {
+    if (field.fieldType === "checkbox") {
       schema = z.array(z.string()).optional();
     } else {
       let stringSchema = z.string();

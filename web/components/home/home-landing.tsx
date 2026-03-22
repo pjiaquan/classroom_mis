@@ -12,7 +12,6 @@ const copy = {
     body:
       "從填寫表單、留下聯絡方式，到後續整理與聯繫，都可以在同一套流程中完成，讓對外體驗更親切，對內作業也更清楚。",
     openForm: "開啟招生表單",
-    openBuilder: "開啟管理介面",
   },
   en: {
     languageLabel: "Language",
@@ -22,7 +21,6 @@ const copy = {
     body:
       "From filling in a form and leaving contact details to organizing follow-up work, everything can stay in one clear flow with a friendlier public experience.",
     openForm: "Open Lead Form",
-    openBuilder: "Open Builder",
   },
 } as const;
 
@@ -60,12 +58,6 @@ export function HomeLanding() {
             href="/forms/lead-intake"
           >
             {t.openForm}
-          </Link>
-          <Link
-            className="inline-flex min-h-12 items-center justify-center rounded-[18px] border border-amber-300 bg-white/90 px-6 py-3 text-[15px] font-semibold tracking-[0.08em] text-stone-700 transition hover:bg-amber-50"
-            href="/admin/forms"
-          >
-            {t.openBuilder}
           </Link>
         </div>
       </section>

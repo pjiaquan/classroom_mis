@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import type { Route } from "next";
 import { usePreferredLocale } from "@/components/shared/use-preferred-locale";
 import { FloatingLocaleSwitcher } from "@/components/shared/floating-locale-switcher";
 
@@ -10,6 +12,7 @@ const copy = {
     title: "感謝您，表單已收到。",
     body: "我們已收到您的資料，將盡快由專人與您聯繫。",
     note: "若有補充需求，也可以透過原本的聯絡方式再告訴我們。",
+    addAnother: "另外新增其他",
   },
   en: {
     languageLabel: "Language",
@@ -17,13 +20,20 @@ const copy = {
     title: "Thank you. Your form was received.",
     body: "We have received your information and will contact you soon.",
     note: "If you would like to add anything else, feel free to reach out through your original contact channel.",
+    addAnother: "Submit another form",
   },
 } as const;
 
-export function SubmissionSuccessShell() {
-  const { locale, setLocale } = usePreferredLocale("zh-TW");
+type SubmissionSuccessShellProps = {
+  formSlug?: string;
+};
 
+export function SubmissionSuccessShell({
+  formSlug = "lead-intake",
+}: SubmissionSuccessShellProps) {
+  const { locale, setLocale } = usePreferredLocale("zh-TW");
   const t = copy[locale];
+  const formHref = `/forms/${formSlug}` as Route;
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-3xl items-center px-4 py-10 sm:px-6 sm:py-16">
@@ -44,6 +54,12 @@ export function SubmissionSuccessShell() {
         </h1>
         <p className="mt-4 text-[15px] leading-8 text-stone-700">{t.body}</p>
         <p className="mt-3 text-sm leading-7 text-stone-500">{t.note}</p>
+        <Link
+          className="mt-6 inline-flex min-h-11 items-center justify-center rounded-[16px] border border-emerald-800 bg-emerald-700 px-4 py-2 text-sm font-semibold tracking-[0.06em] text-white transition hover:bg-emerald-800"
+          href={formHref}
+        >
+          {t.addAnother}
+        </Link>
       </section>
     </main>
   );

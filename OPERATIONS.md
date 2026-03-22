@@ -43,6 +43,8 @@ Update the tracked schema snapshot after a valid schema change:
 bash scripts/update_schema_snapshot.sh
 ```
 
+Create or refresh the snapshot only after a clean rebuild or a reviewed migration has been applied and validated. Do not overwrite `db/schema.snapshot.sql` immediately after an unreviewed live schema change.
+
 Check whether production schema has drifted from the tracked snapshot:
 
 ```bash
@@ -70,14 +72,22 @@ Also keep periodic backups of:
 If production schema was changed directly from NocoDB:
 
 1. Stop and document the exact change.
-2. Run `bash scripts/check_schema_drift.sh`.
-3. Write a catch-up migration that formalizes the live schema.
-4. Apply it in `staging`.
+2. Generate a review draft from the live drift:
+
+```bash
+bash scripts/generate_migration_draft.sh describe_the_change
+```
+
+3. Review the files in `db/migration_drafts/` and turn the approved SQL into a real migration under `db/migrations/`.
+4. Apply the reviewed migration in `staging`.
 5. Validate behavior.
 6. Apply it in `production` if still needed.
 7. Run `docker compose run --rm bootstrap`.
-8. Update the schema snapshot.
-9. Review NocoDB permissions.
+8. Run `bash scripts/check_schema_drift.sh`.
+9. Update the schema snapshot with `bash scripts/update_schema_snapshot.sh`.
+10. Review NocoDB permissions.
+
+Do not rely on NocoDB `Meta Sync` alone to formalize schema changes. It refreshes metadata, but it does not create a git-managed SQL migration.
 
 ## Smoke test checklist
 

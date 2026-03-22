@@ -1,71 +1,54 @@
-# Classroom MIS with NocoDB
+# Classroom MIS with Mathesar
 
 This repository is designed so that `docker compose up -d --build` brings up:
 
 - PostgreSQL
 - Redis
 - dbmate migrations
-- NocoDB
+- Mathesar
 - the public/custom form web app
-- an automatic bootstrap job that creates or reuses the NocoDB base, binds it to the business PostgreSQL database, and triggers metadata sync
+- a one-time Mathesar internal database setup job
 
-The source of truth is still PostgreSQL. NocoDB is an interface on top of the SQL schema, but it now uses a separate internal metadata database so that base sync no longer imports `nc_*` tables.
+The source of truth is still PostgreSQL. Mathesar is now the default internal spreadsheet-like admin UI on top of the SQL schema. The older NocoDB integration is still kept in this repository behind the optional `nocodb` profile, but it is no longer part of the default startup path.
 
-NocoDB should be treated as the internal admin UI, not the long-term public intake layer. Public lead capture usually needs input trimming, sanitization, and file/image workflows that are better handled by your own app or API.
+Mathesar should be treated as the internal admin UI, not the long-term public intake layer. Public lead capture usually needs input trimming, sanitization, and file/image workflows that are better handled by your own app or API.
 
 ## What is automated
 
 On a fresh startup, the stack automatically does all of the following:
 
-1. initializes PostgreSQL with two databases:
-   - `POSTGRES_DB` for NocoDB internal metadata
-   - `APP_POSTGRES_DB` for business tables
+1. initializes PostgreSQL with the business database `APP_POSTGRES_DB`
 2. applies SQL migrations to `APP_POSTGRES_DB`
 3. creates business tables in `APP_SCHEMA` inside `APP_POSTGRES_DB`
-4. starts NocoDB with the admin account from `.env`
-5. signs in to NocoDB through the API
-6. finds the default workspace
-7. creates or reuses the base named by `NOCODB_BASE_TITLE`
-8. creates or reuses the PostgreSQL integration named by `NOCODB_INTEGRATION_TITLE`
-9. rebinds the base source to PostgreSQL database `APP_POSTGRES_DB` and schema `APP_SCHEMA`
-10. sets the PostgreSQL role search path for `APP_POSTGRES_DB` to `APP_SCHEMA`
-11. clears NocoDB metadata cache
-12. runs metadata sync until business tables are visible
-13. creates or reuses a curated `Lead Intake Form` view on the `Leads` table and applies a user-facing field layout
-
-No manual NocoDB UI bootstrap is required for:
-
-- base creation
-- external PostgreSQL connection
-- initial metadata sync
-- initial lead intake form creation
+4. creates or reuses the Mathesar internal database `MATHESAR_POSTGRES_DB`
+5. starts Mathesar on port `8080`
+6. starts the public form app on port `3001`
 
 ## Current automation boundary
 
-This repository now auto-creates one curated NocoDB form view:
+This repository now auto-starts Mathesar against the same PostgreSQL cluster as the business schema.
 
-- `Lead Intake Form` on `Leads`
-- single-select dropdown metadata for enum-like fields such as `status`, `source`, `payment_type`, and `payment_method`
+It does not yet auto-provision the business database connection inside Mathesar itself. After first login, add a database connection in the Mathesar UI pointing at:
 
-It does not yet auto-create other custom UI metadata such as:
-
-- additional form layouts
-- custom grid views
-- Kanban views
-- shared links
+- host: `postgres`
+- port: `5432`
+- database: `APP_POSTGRES_DB` such as `classroom_mis`
+- user: `POSTGRES_USER`
+- password: `POSTGRES_PASSWORD`
 
 For lead intake specifically:
 
-- PostgreSQL now normalizes lead inputs on write so inserts from NocoDB and future custom forms follow the same cleanup rules
-- if you need image upload, image replacement, stricter sanitization, anti-spam, or custom validation, build a small custom form and keep NocoDB for staff operations
+- PostgreSQL now normalizes lead inputs on write so inserts from Mathesar and future custom forms follow the same cleanup rules
+- if you need image upload, image replacement, stricter sanitization, anti-spam, or custom validation, build a small custom form and keep Mathesar for staff operations
+- legacy NocoDB notes later in this file apply only if you explicitly run `docker compose --profile nocodb up`
 
 ## Stack
 
 - `PostgreSQL 16`
 - `Redis 7`
-- `NocoDB`
+- `Mathesar`
 - `dbmate`
-- custom `bootstrap` container for zero-manual NocoDB setup
+- one-time `mathesar-db-setup` job for zero-manual internal DB creation
 - `web/` Next.js app scaffold for public forms and future internal form builder
 
 ## Files
@@ -73,14 +56,13 @@ For lead intake specifically:
 - `docker-compose.yml`: containers and startup order
 - `.env.example`: required environment variables
 - `postgres/initdb`: first-start PostgreSQL database initialization scripts
-- `bootstrap/Dockerfile`: image used by the bootstrap job
-- `scripts/bootstrap_nocodb.sh`: automatic NocoDB base and source bootstrap
 - `db/migrations`: SQL migrations
 - `SCHEMA_GOVERNANCE.md`: schema ownership and recovery rules
 - `OPERATIONS.md`: staging and production workflow
 - `scripts/update_schema_snapshot.sh`: refresh tracked schema snapshot from live PostgreSQL
 - `scripts/check_schema_drift.sh`: detect schema drift for the business schema
 - `scripts/generate_migration_draft.sh`: generate a reviewed migration draft from live schema drift without touching `db/migrations`
+- `scripts/seed_demo_data.sh`: insert a minimal demo dataset only when every core business table is empty
 - `scripts/test_nocodb_inserts.sh`: smoke test that creates and cleans up records through the NocoDB data API for every writable business table
 - `web`: customer-facing form app scaffold and admin builder surface
 
@@ -103,12 +85,14 @@ The app now also includes:
 - multipart public form submission into `form_submissions` and `leads`
 - local file persistence under `data/form_uploads`
 - uploaded file metadata stored in `submission_files`
+- upload validation before disk write, plus signed/admin-guarded download URLs
 
 Container/runtime notes:
 
-- `nocodb` is exposed on `http://localhost:8080`
+- `mathesar` is exposed on `http://localhost:8080`
 - `web` is exposed on `http://localhost:3001`
 - uploaded public-form files are persisted under `./data/form_uploads`
+- `nocodb` is not started by default; enable it with `docker compose --profile nocodb up`
 
 Recommended app env for local development outside Docker:
 
@@ -116,7 +100,10 @@ Recommended app env for local development outside Docker:
 APP_DB_HOST=127.0.0.1
 APP_DB_PORT=5432
 APP_DATABASE_URL=
+APP_REDIS_URL=redis://:your_redis_password@127.0.0.1:6379/0
+TURNSTILE_SITE_KEY=
 TURNSTILE_SECRET_KEY=
+WEB_UPLOAD_URL_SECRET=
 ```
 
 If you run the app outside Docker, point it at a reachable PostgreSQL host yourself. In Compose, the `web` service already uses the internal `postgres` hostname.
@@ -127,14 +114,15 @@ This project uses bind mounts under the project directory for runtime data:
 
 - `./data/postgres`: PostgreSQL data files
 - `./data/redis`: Redis persistence
-- `./data/nocodb`: NocoDB app data stored on the host
+- `./data/mathesar`: Mathesar static, media, and secret data
+- `./data/nocodb`: optional legacy NocoDB app data stored on the host
 
 Important:
 
 - the business source of truth is PostgreSQL, so `./data/postgres` is the most important path
-- the same PostgreSQL cluster contains two databases:
-  - `POSTGRES_DB` for NocoDB internal metadata
-  - `APP_POSTGRES_DB` for business tables scanned by NocoDB
+- the same PostgreSQL cluster can contain:
+  - `APP_POSTGRES_DB` for business tables
+  - `MATHESAR_POSTGRES_DB` for Mathesar internal data
 - PostgreSQL is configured with `PGDATA=/var/lib/postgresql/data/pgdata`, so the bind-mounted `./data/postgres` directory can safely contain mount-point metadata or a tracked `.gitkeep`
 - `docker compose down` stops containers but keeps these directories and their data
 - `docker compose down -v` does not reset bind-mounted directories
@@ -153,7 +141,7 @@ You can inspect these directories directly on the host after the first run, for 
 ```bash
 ls -la data
 ls -la data/postgres
-ls -la data/nocodb
+ls -la data/mathesar
 ```
 
 If you need file-level backups, back up at least:
@@ -169,7 +157,7 @@ Before the first run, make sure the host has:
 
 - Docker
 - Docker Compose v2
-- network access to pull images and build the bootstrap image
+- network access to pull images
 
 If testing locally, port `8080` must be free.
 
@@ -185,24 +173,41 @@ At minimum, set strong values for:
 
 - `POSTGRES_PASSWORD`
 - `REDIS_PASSWORD`
-- `NC_AUTH_JWT_SECRET`
-- `NC_ADMIN_EMAIL`
-- `NC_ADMIN_PASSWORD`
-- `NC_PUBLIC_URL`
+- `MATHESAR_SECRET_KEY`
+
+For Mathesar:
+
+- `MATHESAR_POSTGRES_DB` defaults to `mathesar_django`
+- `MATHESAR_ALLOWED_HOSTS` defaults to `*` for local/internal use
+- `MATHESAR_WEB_CONCURRENCY` defaults to `3`
+
+For the internal web builder under `/admin/*`:
+
+- `WEB_ADMIN_USER` and `WEB_ADMIN_PASSWORD` are optional overrides for the web admin login
+- `WEB_ADMIN_SESSION_SECRET` is an optional signing secret for admin sessions
+- `WEB_UPLOAD_URL_SECRET` is an optional signing secret for upload download URLs
+- if they are left blank, the web app falls back to `NC_ADMIN_EMAIL` and `NC_ADMIN_PASSWORD`
+
+For the public form anti-spam flow:
+
+- set both `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` to enable Cloudflare Turnstile verification
+- the public form submission rate limit uses Redis; inside Docker Compose the `web` service is already wired to the bundled `redis` service
+
+For the optional legacy NocoDB profile:
+
+- set `NC_AUTH_JWT_SECRET`, `NC_ADMIN_EMAIL`, `NC_ADMIN_PASSWORD`, and `NC_PUBLIC_URL`
+- then start it explicitly with `docker compose --profile nocodb up -d`
 
 If `.env` is missing, or any required variable is missing, `docker compose` now hard fails during configuration parsing with an explicit error message. It will not continue with blank values.
 
 Default behavior:
 
-- `POSTGRES_DB=nocodb`
 - `APP_POSTGRES_DB=classroom_mis`
+- `MATHESAR_POSTGRES_DB=mathesar_django`
+- `MATHESAR_ALLOWED_HOSTS=*`
 - `APP_SCHEMA=public`
 - `POSTGRES_HOST=postgres`
 - `POSTGRES_PORT=5432`
-- `NOCODB_INTERNAL_URL=http://nocodb:8080`
-- `NOCODB_BASE_TITLE=Classroom MIS`
-- `NOCODB_INTEGRATION_TITLE=Classroom MIS PostgreSQL`
-- `NOCODB_SOURCE_ALIAS=Primary`
 
 Important:
 
@@ -212,12 +217,17 @@ Important:
 For local testing, this is enough:
 
 ```env
-NC_PUBLIC_URL=http://localhost:8080
+MATHESAR_ALLOWED_HOSTS=*
 ```
 
 ## First run
 
-Important upgrade warning:
+Default startup now gives you:
+
+- Mathesar on `http://localhost:8080`
+- the public form app on `http://localhost:3001`
+
+If you are upgrading from an older NocoDB-first checkout, read this first:
 
 - if you are upgrading from any earlier checkout that used a single PostgreSQL database for both NocoDB metadata and classroom tables, you must reset `./data/postgres` and `./data/nocodb`
 - changing `.env` alone is not enough, because `POSTGRES_USER`, `POSTGRES_DB`, and the `postgres/initdb` scripts only apply when PostgreSQL initializes a brand new data directory
@@ -261,6 +271,34 @@ initdb: error: directory "/var/lib/postgresql/data" exists but is not empty
 that was caused by trying to initialize PostgreSQL directly in the bind-mounted root. The current compose file avoids that by setting `PGDATA` to a child directory. If the old failed initialization left local files behind, stop the stack and clear `./data/postgres` before starting again.
 
 If you hit migration replay or duplicate-table problems on an older checkout, the current stack avoids that by forcing `dbmate` to use `public.schema_migrations` regardless of `APP_SCHEMA`. If your local database is disposable, clear `./data/postgres` and restart the stack so migrations run cleanly from the beginning.
+
+### Mathesar first login
+
+Check service state:
+
+```bash
+docker compose ps
+```
+
+Open Mathesar:
+
+- local: `http://localhost:8080`
+
+Mathesar should redirect you to its login page. After signing in, add a PostgreSQL server connection pointing at:
+
+- host: `postgres`
+- port: `5432`
+- database: `APP_POSTGRES_DB`
+- user: `POSTGRES_USER`
+- password: `POSTGRES_PASSWORD`
+
+### Legacy NocoDB notes
+
+The remaining notes in this section apply only if you intentionally run the old integration with:
+
+```bash
+docker compose --profile nocodb up -d
+```
 
 Check service state:
 
@@ -350,6 +388,7 @@ Expected result includes:
 | Existing environment, app restart only | `docker compose up -d` | none | `postgres`, `redis`, and `nocodb` are `Up` |
 | Existing environment, changed SQL migrations | `docker compose run --rm migrate --wait --wait-timeout 120s --migrations-dir /db/migrations --no-dump-schema up` then `docker compose run --rm bootstrap` | none | New tables or columns appear in NocoDB after bootstrap completes |
 | Existing environment, changed only NocoDB metadata binding needs refresh | `docker compose run --rm bootstrap` | none | Base still points to schema `APP_SCHEMA` and tables are visible |
+| Existing environment, insert demo data into an empty business database | `bash scripts/seed_demo_data.sh` | Run only on an intentionally empty environment | Script inserts a richer demo set of students, classes, enrollments, attendance, payments, and leads |
 | Existing environment, verify every writable table can create records through NocoDB | `bash scripts/test_nocodb_inserts.sh` | none | Script exits successfully after creating and cleaning up test records |
 | Update tracked schema snapshot after validated schema change | `bash scripts/update_schema_snapshot.sh` | Commit the updated snapshot file if you use git | `db/schema.snapshot.sql` matches the current business schema |
 | Check schema drift | `bash scripts/check_schema_drift.sh` | none | Command exits successfully with `No schema drift detected.` |
@@ -428,6 +467,45 @@ bash scripts/generate_migration_draft.sh add_something
 ```
 
 This writes review-only files into `db/migration_drafts/`. It does not create or apply a real migration automatically.
+
+If someone already added or changed a field in NocoDB, do this next:
+
+1. Generate a review draft from the live schema change:
+
+```bash
+bash scripts/generate_migration_draft.sh describe_the_change
+```
+
+2. Review the draft in `db/migration_drafts/` and copy the final SQL into a real migration under `db/migrations/`.
+3. Apply the reviewed migration:
+
+```bash
+docker compose run --rm migrate --wait --wait-timeout 120s --migrations-dir /db/migrations --no-dump-schema up
+```
+
+4. Refresh NocoDB metadata:
+
+```bash
+docker compose run --rm bootstrap
+```
+
+5. Confirm there is no remaining drift and then refresh the tracked snapshot:
+
+```bash
+bash scripts/check_schema_drift.sh
+bash scripts/update_schema_snapshot.sh
+```
+
+Do not rely on NocoDB `Meta Sync` alone to formalize schema changes. `Meta Sync` refreshes metadata, but it does not create a git-managed SQL migration for the change.
+Create or refresh `db/schema.snapshot.sql` only after a clean rebuild or a reviewed migration has been applied and validated. Do not overwrite the snapshot immediately after an unreviewed live schema change in NocoDB or PostgreSQL.
+
+Seed a richer demo dataset only when every core business table is empty:
+
+```bash
+bash scripts/seed_demo_data.sh
+```
+
+The script exits without changing data if any of these tables already contain rows: `students`, `classes`, `enrollments`, `attendance_sessions`, `attendance`, `payments`, `leads`.
 
 Apply migrations:
 

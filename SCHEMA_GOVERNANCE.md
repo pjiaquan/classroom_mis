@@ -8,6 +8,7 @@ This document defines how schema changes are controlled in the Classroom MIS dep
 - SQL migrations are the only approved way to create, change, or remove tables and columns in production.
 - NocoDB is used for data entry, search, filtering, and light UI configuration.
 - NocoDB must not become the source of truth for schema design.
+- `db/schema.snapshot.sql` is a reviewed baseline and should be created or refreshed only after a clean rebuild or a validated migration, not immediately after an unreviewed live schema edit.
 
 ## Allowed and forbidden actions
 

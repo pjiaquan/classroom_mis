@@ -6,6 +6,7 @@ import type { Route } from "next";
 import { PublicField } from "@/components/fields/public-field";
 import { type PublicFormDefinition } from "@/lib/forms/types";
 import { FloatingLocaleSwitcher } from "@/components/shared/floating-locale-switcher";
+import { TurnstileWidget } from "@/components/shared/turnstile-widget";
 import { usePreferredLocale } from "@/components/shared/use-preferred-locale";
 import {
   getChromeMessages,
@@ -16,9 +17,13 @@ import {
 
 type FormRendererProps = {
   form: PublicFormDefinition;
+  turnstileSiteKey?: string | null;
 };
 
-export function FormRenderer({ form }: FormRendererProps) {
+export function FormRenderer({
+  form,
+  turnstileSiteKey,
+}: FormRendererProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -31,6 +36,8 @@ export function FormRenderer({ form }: FormRendererProps) {
     [form, locale],
   );
   const localizedTitle = getLocalizedFormName(form, locale);
+  const shouldRenderTurnstile =
+    Boolean(form.settings.turnstileRequired) && Boolean(turnstileSiteKey);
 
   async function handleSubmit(formData: FormData) {
     setError(null);
@@ -99,6 +106,10 @@ export function FormRenderer({ form }: FormRendererProps) {
               error={fieldErrors[field.fieldKey]}
             />
           ))}
+
+          {shouldRenderTurnstile ? (
+            <TurnstileWidget siteKey={turnstileSiteKey ?? ""} />
+          ) : null}
 
           {error ? (
             <p className="rounded-[18px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">

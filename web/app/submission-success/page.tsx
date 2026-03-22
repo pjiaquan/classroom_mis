@@ -9,7 +9,7 @@ type SubmissionSuccessPageProps = {
 export default async function SubmissionSuccessPage({
   searchParams,
 }: SubmissionSuccessPageProps) {
-  await searchParams;
+  const { form } = await searchParams;
 
-  return <SubmissionSuccessShell />;
+  return <SubmissionSuccessShell formSlug={form} />;
 }

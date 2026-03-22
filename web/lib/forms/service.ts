@@ -5,13 +5,15 @@ import { normalizeSubmissionPayload } from "@/lib/sanitization/forms";
 import { verifyTurnstileToken } from "@/lib/anti-spam/turnstile";
 import {
   type PublicFormDefinition,
+  type SubmissionPendingFile,
   type SubmissionStoredFile,
 } from "@/lib/forms/types";
-import { persistUploadedFile } from "@/lib/uploads/service";
+import { deleteStoredFile, persistUploadedFile } from "@/lib/uploads/service";
 
 type SubmitPublicFormInput = {
   slug: string;
   payload: Record<string, unknown>;
+  uploadedFiles?: Record<string, File[]>;
   ipAddress?: string;
   userAgent?: string;
   referer?: string;
@@ -43,20 +45,6 @@ export async function submitPublicForm(
     };
   }
 
-  const verification = await verifyTurnstileToken(
-    typeof input.payload.turnstileToken === "string"
-      ? input.payload.turnstileToken
-      : undefined,
-  );
-
-  if (!verification.ok) {
-    return {
-      ok: false,
-      statusCode: 400,
-      error: verification.error,
-    };
-  }
-
   const normalized = normalizeSubmissionPayload(form, input.payload);
   const schema = buildSubmissionSchema(form);
   const parseResult = schema.safeParse(normalized.cleanedPayload);
@@ -75,115 +63,154 @@ export async function submitPublicForm(
     };
   }
 
-  const transactionResult = await withTransaction(async (client) => {
-    const submissionInsert = await client.query<{
-      id: number;
-    }>(
-      `
-        INSERT INTO form_submissions (
-          form_definition_id,
-          status,
-          payload_json,
-          normalized_json,
-          ip,
-          user_agent,
-          referer,
-          turnstile_success,
-          source
-        )
-        VALUES ($1, 'received', $2::jsonb, $3::jsonb, NULLIF($4, '')::inet, $5, $6, $7, $8)
-        RETURNING id
-      `,
-      [
-        form.id,
-        JSON.stringify(input.payload),
-        JSON.stringify(parseResult.data),
-        input.ipAddress ?? "",
-        input.userAgent ?? null,
-        input.referer ?? null,
-        true,
-        typeof parseResult.data.source === "string" ? parseResult.data.source : null,
-      ],
-    );
+  const verification = await verifyTurnstileToken(
+    typeof input.payload.turnstileToken === "string"
+      ? input.payload.turnstileToken
+      : undefined,
+    input.ipAddress,
+  );
 
-    const submissionId = submissionInsert.rows[0].id;
-    const mappedLead = mapSubmissionToLead(form, parseResult.data);
-    const extraJson = {
-      ...mappedLead.extraJson,
-      submission_id: submissionId,
+  if (!verification.ok) {
+    return {
+      ok: false,
+      statusCode: 400,
+      error: verification.error,
     };
+  }
 
-    const leadInsert = await client.query<{ id: number }>(
-      `
-        INSERT INTO leads (
-          parent_name,
-          phone,
-          child_name,
-          child_grade,
-          source,
-          notes,
-          extra_json
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-        RETURNING id
-      `,
-      [
-        mappedLead.parentName,
-        mappedLead.phone,
-        mappedLead.childName,
-        mappedLead.childGrade,
-        mappedLead.source,
-        mappedLead.notes,
-        JSON.stringify(extraJson),
-      ],
-    );
-
-    const leadId = leadInsert.rows[0].id;
-
-    for (const file of mappedLead.files) {
-      await client.query(
-        `
-          INSERT INTO submission_files (
-            form_submission_id,
-            field_key,
-            storage_key,
-            original_filename,
-            mime_type,
-            file_size_bytes,
-            public_url
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, $7)
-        `,
-        [
-          submissionId,
-          file.fieldKey,
-          file.storageKey,
-          file.originalFilename,
-          file.mimeType,
-          file.fileSizeBytes,
-          file.publicUrl,
-        ],
-      );
-    }
-
-    await client.query(
-      `
-        UPDATE form_submissions
-        SET lead_id = $2,
-            status = 'accepted'
-        WHERE id = $1
-      `,
-      [submissionId, leadId],
-    );
-
-    return { submissionId, leadId };
+  const preparedUploads = preparePendingUploads({
+    form,
+    uploadedFiles: input.uploadedFiles ?? {},
   });
 
-  return {
-    ok: true,
-    submissionId: transactionResult.submissionId,
-    leadId: transactionResult.leadId,
-  };
+  if (!preparedUploads.ok) {
+    return {
+      ok: false,
+      statusCode: 422,
+      error: "Please fix the highlighted fields.",
+      fieldErrors: preparedUploads.fieldErrors,
+    };
+  }
+
+  let storedFiles: SubmissionStoredFile[] = [];
+
+  try {
+    storedFiles = await persistPendingUploads(form.slug, preparedUploads.pendingFiles);
+    const normalizedPayload = attachStoredFilesToPayload(parseResult.data, storedFiles);
+
+    const transactionResult = await withTransaction(async (client) => {
+      const submissionInsert = await client.query<{
+        id: number;
+      }>(
+        `
+          INSERT INTO form_submissions (
+            form_definition_id,
+            status,
+            payload_json,
+            normalized_json,
+            ip,
+            user_agent,
+            referer,
+            turnstile_success,
+            source
+          )
+          VALUES ($1, 'received', $2::jsonb, $3::jsonb, NULLIF($4, '')::inet, $5, $6, $7, $8)
+          RETURNING id
+        `,
+        [
+          form.id,
+          JSON.stringify(input.payload),
+          JSON.stringify(normalizedPayload),
+          input.ipAddress ?? "",
+          input.userAgent ?? null,
+          input.referer ?? null,
+          true,
+          typeof normalizedPayload.source === "string" ? normalizedPayload.source : null,
+        ],
+      );
+
+      const submissionId = submissionInsert.rows[0].id;
+      const mappedLead = mapSubmissionToLead(form, normalizedPayload);
+      const extraJson = {
+        ...mappedLead.extraJson,
+        submission_id: submissionId,
+      };
+
+      const leadInsert = await client.query<{ id: number }>(
+        `
+          INSERT INTO leads (
+            parent_name,
+            phone,
+            child_name,
+            child_grade,
+            source,
+            notes,
+            extra_json
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+          RETURNING id
+        `,
+        [
+          mappedLead.parentName,
+          mappedLead.phone,
+          mappedLead.childName,
+          mappedLead.childGrade,
+          mappedLead.source,
+          mappedLead.notes,
+          JSON.stringify(extraJson),
+        ],
+      );
+
+      const leadId = leadInsert.rows[0].id;
+
+      for (const file of mappedLead.files) {
+        await client.query(
+          `
+            INSERT INTO submission_files (
+              form_submission_id,
+              field_key,
+              storage_key,
+              original_filename,
+              mime_type,
+              file_size_bytes,
+              public_url
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+          `,
+          [
+            submissionId,
+            file.fieldKey,
+            file.storageKey,
+            file.originalFilename,
+            file.mimeType,
+            file.fileSizeBytes,
+            file.publicUrl,
+          ],
+        );
+      }
+
+      await client.query(
+        `
+          UPDATE form_submissions
+          SET lead_id = $2,
+              status = 'accepted'
+          WHERE id = $1
+        `,
+        [submissionId, leadId],
+      );
+
+      return { submissionId, leadId };
+    });
+
+    return {
+      ok: true,
+      submissionId: transactionResult.submissionId,
+      leadId: transactionResult.leadId,
+    };
+  } catch (error) {
+    await Promise.allSettled(storedFiles.map((file) => deleteStoredFile(file.storageKey)));
+    throw error;
+  }
 }
 
 export async function parsePublicFormPayload(input: {
@@ -191,6 +218,7 @@ export async function parsePublicFormPayload(input: {
   formData: FormData;
 }) {
   const payload: Record<string, unknown> = {};
+  const uploadedFiles: Record<string, File[]> = {};
 
   for (const field of input.form.fields) {
     if (field.fieldType === "checkbox") {
@@ -201,15 +229,9 @@ export async function parsePublicFormPayload(input: {
     }
 
     if (field.fieldType === "image" || field.fieldType === "file") {
-      const entry = input.formData.get(field.fieldKey);
-
-      if (entry instanceof File && entry.size > 0) {
-        payload[field.fieldKey] = await persistUploadedFile({
-          formSlug: input.form.slug,
-          fieldKey: field.fieldKey,
-          file: entry,
-        });
-      }
+      uploadedFiles[field.fieldKey] = input.formData
+        .getAll(field.fieldKey)
+        .filter((entry): entry is File => entry instanceof File && entry.size > 0);
       continue;
     }
 
@@ -224,7 +246,7 @@ export async function parsePublicFormPayload(input: {
     payload.turnstileToken = turnstileToken;
   }
 
-  return payload;
+  return { payload, uploadedFiles };
 }
 
 function mapSubmissionToLead(
@@ -291,5 +313,130 @@ function isStoredFile(value: unknown): value is SubmissionStoredFile {
     typeof value === "object" &&
     value !== null &&
     typeof (value as SubmissionStoredFile).storageKey === "string"
+  );
+}
+
+const DEFAULT_MAX_FILE_SIZE_MB = 10;
+
+function preparePendingUploads(input: {
+  form: PublicFormDefinition;
+  uploadedFiles: Record<string, File[]>;
+}) {
+  const fieldErrors: Record<string, string> = {};
+  const pendingFiles: SubmissionPendingFile[] = [];
+
+  for (const field of input.form.fields) {
+    if (field.fieldType !== "image" && field.fieldType !== "file") {
+      continue;
+    }
+
+    const files = input.uploadedFiles[field.fieldKey] ?? [];
+
+    if (files.length > 1) {
+      fieldErrors[field.fieldKey] = `${field.label} only accepts one file per submission.`;
+      continue;
+    }
+
+    const file = files[0];
+
+    if (!file) {
+      if (field.isRequired) {
+        fieldErrors[field.fieldKey] = `${field.label} is required.`;
+      }
+      continue;
+    }
+
+    const maxFileSizeMb =
+      typeof field.validation.maxFileSizeMb === "number"
+        ? Number(field.validation.maxFileSizeMb)
+        : DEFAULT_MAX_FILE_SIZE_MB;
+    const maxFileSizeBytes = maxFileSizeMb * 1024 * 1024;
+
+    if (!Number.isFinite(maxFileSizeBytes) || maxFileSizeBytes <= 0) {
+      fieldErrors[field.fieldKey] = `${field.label} has an invalid upload size limit.`;
+      continue;
+    }
+
+    if (file.size > maxFileSizeBytes) {
+      fieldErrors[field.fieldKey] = `${field.label} must be ${maxFileSizeMb}MB or smaller.`;
+      continue;
+    }
+
+    const mimeType = file.type || "application/octet-stream";
+    const allowedMimeTypes = Array.isArray(field.validation.allowedMimeTypes)
+      ? field.validation.allowedMimeTypes.filter(
+          (value): value is string => typeof value === "string" && value.length > 0,
+        )
+      : [];
+
+    if (field.fieldType === "image" && !mimeType.startsWith("image/")) {
+      fieldErrors[field.fieldKey] = `${field.label} must be an image file.`;
+      continue;
+    }
+
+    if (allowedMimeTypes.length > 0 && !allowedMimeTypes.includes(mimeType)) {
+      fieldErrors[field.fieldKey] = `${field.label} has an unsupported file type.`;
+      continue;
+    }
+
+    pendingFiles.push({
+      fieldKey: field.fieldKey,
+      file,
+      originalFilename: file.name || "upload.bin",
+      mimeType,
+      fileSizeBytes: file.size,
+    });
+  }
+
+  if (Object.keys(fieldErrors).length > 0) {
+    return {
+      ok: false as const,
+      fieldErrors,
+    };
+  }
+
+  return {
+    ok: true as const,
+    pendingFiles,
+  };
+}
+
+async function persistPendingUploads(
+  formSlug: string,
+  pendingFiles: SubmissionPendingFile[],
+) {
+  const storedFiles: SubmissionStoredFile[] = [];
+
+  try {
+    for (const pendingFile of pendingFiles) {
+      const storedFile = await persistUploadedFile({
+        formSlug,
+        fieldKey: pendingFile.fieldKey,
+        file: pendingFile.file,
+      });
+      storedFiles.push(storedFile);
+    }
+
+    return storedFiles;
+  } catch (error) {
+    await Promise.allSettled(storedFiles.map((file) => deleteStoredFile(file.storageKey)));
+    throw error;
+  }
+}
+
+function attachStoredFilesToPayload(
+  payload: Record<string, unknown>,
+  storedFiles: SubmissionStoredFile[],
+) {
+  if (storedFiles.length === 0) {
+    return payload;
+  }
+
+  return storedFiles.reduce<Record<string, unknown>>(
+    (accumulator, file) => {
+      accumulator[file.fieldKey] = file;
+      return accumulator;
+    },
+    { ...payload },
   );
 }

@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { isAdminSessionAuthenticated } from "@/lib/admin/auth";
 
 type RouteContext = {
   params: Promise<{
@@ -6,7 +7,15 @@ type RouteContext = {
   }>;
 };
 
-export async function POST(_: Request, context: RouteContext) {
+export async function POST(request: NextRequest, context: RouteContext) {
+  const isAuthenticated = await isAdminSessionAuthenticated();
+
+  if (!isAuthenticated) {
+    return NextResponse.redirect(new URL("/admin-auth", request.url), {
+      status: 303,
+    });
+  }
+
   const { id } = await context.params;
 
   return NextResponse.json({

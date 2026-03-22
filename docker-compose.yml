@@ -49,9 +49,84 @@ services:
     networks:
       - backend
 
+  mathesar-db-setup:
+    image: postgres:16
+    container_name: classroom-mis-mathesar-db-setup
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required. Copy .env.example to .env and set POSTGRES_PASSWORD.}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required. Copy .env.example to .env and set POSTGRES_DB.}
+      POSTGRES_HOST: ${POSTGRES_HOST:?POSTGRES_HOST is required. Copy .env.example to .env and set POSTGRES_HOST.}
+      POSTGRES_PORT: ${POSTGRES_PORT:?POSTGRES_PORT is required. Copy .env.example to .env and set POSTGRES_PORT.}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required. Copy .env.example to .env and set POSTGRES_USER.}
+      MATHESAR_POSTGRES_DB: ${MATHESAR_POSTGRES_DB:-mathesar_django}
+    command:
+      - sh
+      - -lc
+      - |
+        psql \
+          --host "$$POSTGRES_HOST" \
+          --port "$$POSTGRES_PORT" \
+          --username "$$POSTGRES_USER" \
+          --dbname "$$POSTGRES_DB" \
+          --set mathesar_db="$$MATHESAR_POSTGRES_DB" \
+          --set postgres_user="$$POSTGRES_USER" \
+          <<'SQL'
+        SELECT format('CREATE DATABASE %I OWNER %I', :'mathesar_db', :'postgres_user')
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM pg_database
+          WHERE datname = :'mathesar_db'
+        )\gexec
+        SQL
+    restart: "no"
+    networks:
+      - backend
+
+  mathesar:
+    image: mathesar/mathesar:latest
+    container_name: classroom-mis-mathesar
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mathesar-db-setup:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+      ALLOWED_HOSTS: ${MATHESAR_ALLOWED_HOSTS:-*}
+      DEBUG: ${MATHESAR_DEBUG:-false}
+      SECRET_KEY: ${MATHESAR_SECRET_KEY:-}
+      WEB_CONCURRENCY: ${MATHESAR_WEB_CONCURRENCY:-3}
+      POSTGRES_DB: ${MATHESAR_POSTGRES_DB:-mathesar_django}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required. Copy .env.example to .env and set POSTGRES_USER.}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required. Copy .env.example to .env and set POSTGRES_PASSWORD.}
+      POSTGRES_HOST: ${POSTGRES_HOST:?POSTGRES_HOST is required. Copy .env.example to .env and set POSTGRES_HOST.}
+      POSTGRES_PORT: ${POSTGRES_PORT:?POSTGRES_PORT is required. Copy .env.example to .env and set POSTGRES_PORT.}
+      TZ: ${TZ:?TZ is required. Copy .env.example to .env and set TZ.}
+    volumes:
+      - ./data/mathesar/static:/code/static
+      - ./data/mathesar/media:/code/.media
+      - ./data/mathesar/secrets:/code/.secrets
+    ports:
+      - "8080:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000 >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    networks:
+      - backend
+
   nocodb:
     image: nocodb/nocodb:latest
     container_name: classroom-mis-nocodb
+    profiles: ["nocodb"]
     restart: unless-stopped
     depends_on:
       postgres:
@@ -61,12 +136,12 @@ services:
       migrate:
         condition: service_completed_successfully
     environment:
-      NC_DB: pg://postgres:5432?u=${POSTGRES_USER:?POSTGRES_USER is required.}&p=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required.}&d=${POSTGRES_DB:?POSTGRES_DB is required.}
-      NC_REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required.}@redis:6379/0
-      NC_AUTH_JWT_SECRET: ${NC_AUTH_JWT_SECRET:?NC_AUTH_JWT_SECRET is required. Copy .env.example to .env and set NC_AUTH_JWT_SECRET.}
-      NC_PUBLIC_URL: ${NC_PUBLIC_URL:?NC_PUBLIC_URL is required. Copy .env.example to .env and set NC_PUBLIC_URL.}
-      NC_ADMIN_EMAIL: ${NC_ADMIN_EMAIL:?NC_ADMIN_EMAIL is required. Copy .env.example to .env and set NC_ADMIN_EMAIL.}
-      NC_ADMIN_PASSWORD: ${NC_ADMIN_PASSWORD:?NC_ADMIN_PASSWORD is required. Copy .env.example to .env and set NC_ADMIN_PASSWORD.}
+      NC_DB: pg://postgres:5432?u=${POSTGRES_USER:-}&p=${POSTGRES_PASSWORD:-}&d=${POSTGRES_DB:-}
+      NC_REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      NC_AUTH_JWT_SECRET: ${NC_AUTH_JWT_SECRET:-}
+      NC_PUBLIC_URL: ${NC_PUBLIC_URL:-}
+      NC_ADMIN_EMAIL: ${NC_ADMIN_EMAIL:-}
+      NC_ADMIN_PASSWORD: ${NC_ADMIN_PASSWORD:-}
       TZ: ${TZ:?TZ is required. Copy .env.example to .env and set TZ.}
     volumes:
       - ./data/nocodb:/usr/app/data
@@ -86,6 +161,7 @@ services:
       context: .
       dockerfile: bootstrap/Dockerfile
     container_name: classroom-mis-bootstrap
+    profiles: ["nocodb"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -94,15 +170,15 @@ services:
     environment:
       APP_SCHEMA: ${APP_SCHEMA:?APP_SCHEMA is required. Copy .env.example to .env and set APP_SCHEMA.}
       APP_POSTGRES_DB: ${APP_POSTGRES_DB:?APP_POSTGRES_DB is required. Copy .env.example to .env and set APP_POSTGRES_DB.}
-      NC_ADMIN_EMAIL: ${NC_ADMIN_EMAIL:?NC_ADMIN_EMAIL is required. Copy .env.example to .env and set NC_ADMIN_EMAIL.}
-      NC_ADMIN_PASSWORD: ${NC_ADMIN_PASSWORD:?NC_ADMIN_PASSWORD is required. Copy .env.example to .env and set NC_ADMIN_PASSWORD.}
-      NOCODB_BASE_TITLE: ${NOCODB_BASE_TITLE:?NOCODB_BASE_TITLE is required. Copy .env.example to .env and set NOCODB_BASE_TITLE.}
-      NOCODB_BASE_VERSION: ${NOCODB_BASE_VERSION:?NOCODB_BASE_VERSION is required. Copy .env.example to .env and set NOCODB_BASE_VERSION.}
-      NOCODB_BOOTSTRAP_POLL_INTERVAL_SECONDS: ${NOCODB_BOOTSTRAP_POLL_INTERVAL_SECONDS:?NOCODB_BOOTSTRAP_POLL_INTERVAL_SECONDS is required. Copy .env.example to .env and set NOCODB_BOOTSTRAP_POLL_INTERVAL_SECONDS.}
-      NOCODB_BOOTSTRAP_TIMEOUT_SECONDS: ${NOCODB_BOOTSTRAP_TIMEOUT_SECONDS:?NOCODB_BOOTSTRAP_TIMEOUT_SECONDS is required. Copy .env.example to .env and set NOCODB_BOOTSTRAP_TIMEOUT_SECONDS.}
-      NOCODB_INTEGRATION_TITLE: ${NOCODB_INTEGRATION_TITLE:?NOCODB_INTEGRATION_TITLE is required. Copy .env.example to .env and set NOCODB_INTEGRATION_TITLE.}
-      NOCODB_INTERNAL_URL: ${NOCODB_INTERNAL_URL:?NOCODB_INTERNAL_URL is required. Copy .env.example to .env and set NOCODB_INTERNAL_URL.}
-      NOCODB_SOURCE_ALIAS: ${NOCODB_SOURCE_ALIAS:?NOCODB_SOURCE_ALIAS is required. Copy .env.example to .env and set NOCODB_SOURCE_ALIAS.}
+      NC_ADMIN_EMAIL: ${NC_ADMIN_EMAIL:-}
+      NC_ADMIN_PASSWORD: ${NC_ADMIN_PASSWORD:-}
+      NOCODB_BASE_TITLE: ${NOCODB_BASE_TITLE:-}
+      NOCODB_BASE_VERSION: ${NOCODB_BASE_VERSION:-}
+      NOCODB_BOOTSTRAP_POLL_INTERVAL_SECONDS: ${NOCODB_BOOTSTRAP_POLL_INTERVAL_SECONDS:-}
+      NOCODB_BOOTSTRAP_TIMEOUT_SECONDS: ${NOCODB_BOOTSTRAP_TIMEOUT_SECONDS:-}
+      NOCODB_INTEGRATION_TITLE: ${NOCODB_INTEGRATION_TITLE:-}
+      NOCODB_INTERNAL_URL: ${NOCODB_INTERNAL_URL:-}
+      NOCODB_SOURCE_ALIAS: ${NOCODB_SOURCE_ALIAS:-}
       POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required. Copy .env.example to .env and set POSTGRES_DB.}
       POSTGRES_HOST: ${POSTGRES_HOST:?POSTGRES_HOST is required. Copy .env.example to .env and set POSTGRES_HOST.}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required. Copy .env.example to .env and set POSTGRES_PASSWORD.}
@@ -128,8 +204,17 @@ services:
       APP_POSTGRES_DB: ${APP_POSTGRES_DB:?APP_POSTGRES_DB is required. Copy .env.example to .env and set APP_POSTGRES_DB.}
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required. Copy .env.example to .env and set POSTGRES_USER.}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required. Copy .env.example to .env and set POSTGRES_PASSWORD.}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required. Copy .env.example to .env and set REDIS_PASSWORD.}
+      NC_ADMIN_EMAIL: ${NC_ADMIN_EMAIL:?NC_ADMIN_EMAIL is required. Copy .env.example to .env and set NC_ADMIN_EMAIL.}
+      NC_ADMIN_PASSWORD: ${NC_ADMIN_PASSWORD:?NC_ADMIN_PASSWORD is required. Copy .env.example to .env and set NC_ADMIN_PASSWORD.}
+      WEB_ADMIN_USER: ${WEB_ADMIN_USER:-}
+      WEB_ADMIN_PASSWORD: ${WEB_ADMIN_PASSWORD:-}
+      WEB_UPLOAD_URL_SECRET: ${WEB_UPLOAD_URL_SECRET:-}
+      APP_REDIS_HOST: redis
+      APP_REDIS_PORT: 6379
       APP_DB_HOST: postgres
       APP_DB_PORT: 5432
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
       TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
       TZ: ${TZ:?TZ is required. Copy .env.example to .env and set TZ.}
     volumes:
