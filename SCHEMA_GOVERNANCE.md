@@ -66,10 +66,11 @@ If a user directly adds a field such as `備註` from the NocoDB UI:
 
 1. Confirm whether the change reached PostgreSQL.
 2. Record the exact table, column name, data type, nullability, and default.
-3. Create a catch-up migration that formalizes the live database change.
-4. Apply that migration to all lower environments.
-5. Run `docker compose run --rm bootstrap` if NocoDB metadata needs to be refreshed.
-6. Review permissions and remove schema edit access from users who should not have it.
+3. Generate a review draft with `bash scripts/generate_migration_draft.sh <change_name>` if that helps capture the live drift.
+4. Create a catch-up migration that formalizes the live database change.
+5. Apply that migration to all lower environments.
+6. Run `docker compose run --rm bootstrap` if NocoDB metadata needs to be refreshed.
+7. Review permissions and remove schema edit access from users who should not have it.
 
 Do not leave the production database ahead of git-managed migrations.
 

@@ -113,5 +113,37 @@ services:
     networks:
       - backend
 
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: classroom-mis-web
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      APP_POSTGRES_DB: ${APP_POSTGRES_DB:?APP_POSTGRES_DB is required. Copy .env.example to .env and set APP_POSTGRES_DB.}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required. Copy .env.example to .env and set POSTGRES_USER.}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required. Copy .env.example to .env and set POSTGRES_PASSWORD.}
+      APP_DB_HOST: postgres
+      APP_DB_PORT: 5432
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+      TZ: ${TZ:?TZ is required. Copy .env.example to .env and set TZ.}
+    volumes:
+      - ./data/form_uploads:/data/form_uploads
+    ports:
+      - "3001:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - backend
+
 networks:
   backend:

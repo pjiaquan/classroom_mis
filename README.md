@@ -6,9 +6,12 @@ This repository is designed so that `docker compose up -d --build` brings up:
 - Redis
 - dbmate migrations
 - NocoDB
+- the public/custom form web app
 - an automatic bootstrap job that creates or reuses the NocoDB base, binds it to the business PostgreSQL database, and triggers metadata sync
 
 The source of truth is still PostgreSQL. NocoDB is an interface on top of the SQL schema, but it now uses a separate internal metadata database so that base sync no longer imports `nc_*` tables.
+
+NocoDB should be treated as the internal admin UI, not the long-term public intake layer. Public lead capture usually needs input trimming, sanitization, and file/image workflows that are better handled by your own app or API.
 
 ## What is automated
 
@@ -28,23 +31,33 @@ On a fresh startup, the stack automatically does all of the following:
 10. sets the PostgreSQL role search path for `APP_POSTGRES_DB` to `APP_SCHEMA`
 11. clears NocoDB metadata cache
 12. runs metadata sync until business tables are visible
+13. creates or reuses a curated `Lead Intake Form` view on the `Leads` table and applies a user-facing field layout
 
 No manual NocoDB UI bootstrap is required for:
 
 - base creation
 - external PostgreSQL connection
 - initial metadata sync
+- initial lead intake form creation
 
 ## Current automation boundary
 
-This repository does not yet auto-create custom NocoDB UI metadata such as:
+This repository now auto-creates one curated NocoDB form view:
 
-- form layouts
+- `Lead Intake Form` on `Leads`
+- single-select dropdown metadata for enum-like fields such as `status`, `source`, `payment_type`, and `payment_method`
+
+It does not yet auto-create other custom UI metadata such as:
+
+- additional form layouts
 - custom grid views
 - Kanban views
 - shared links
 
-After bootstrap, the tables and SQL views are already visible in NocoDB. If you want auto-generated forms and views too, that is a separate automation layer.
+For lead intake specifically:
+
+- PostgreSQL now normalizes lead inputs on write so inserts from NocoDB and future custom forms follow the same cleanup rules
+- if you need image upload, image replacement, stricter sanitization, anti-spam, or custom validation, build a small custom form and keep NocoDB for staff operations
 
 ## Stack
 
@@ -53,6 +66,7 @@ After bootstrap, the tables and SQL views are already visible in NocoDB. If you 
 - `NocoDB`
 - `dbmate`
 - custom `bootstrap` container for zero-manual NocoDB setup
+- `web/` Next.js app scaffold for public forms and future internal form builder
 
 ## Files
 
@@ -66,6 +80,46 @@ After bootstrap, the tables and SQL views are already visible in NocoDB. If you 
 - `OPERATIONS.md`: staging and production workflow
 - `scripts/update_schema_snapshot.sh`: refresh tracked schema snapshot from live PostgreSQL
 - `scripts/check_schema_drift.sh`: detect schema drift for the business schema
+- `scripts/generate_migration_draft.sh`: generate a reviewed migration draft from live schema drift without touching `db/migrations`
+- `scripts/test_nocodb_inserts.sh`: smoke test that creates and cleans up records through the NocoDB data API for every writable business table
+- `web`: customer-facing form app scaffold and admin builder surface
+
+## Form app scaffold
+
+This repository now includes a `web/` scaffold for a dedicated public form app:
+
+- public form route: `/forms/:slug`
+- submission endpoint: `/forms/:slug/submit`
+- form definition API: `/api/forms/:slug`
+- upload intent endpoint: `/api/uploads/presign`
+- internal builder routes under `/admin/forms`
+
+The app is now included in Docker Compose and listens on port `3001` by default.
+The database schema for dynamic forms is added through migrations and seeded with one published `lead-intake` form definition.
+
+The app now also includes:
+
+- a real PostgreSQL repository layer with mock fallback when the form tables are not available yet
+- multipart public form submission into `form_submissions` and `leads`
+- local file persistence under `data/form_uploads`
+- uploaded file metadata stored in `submission_files`
+
+Container/runtime notes:
+
+- `nocodb` is exposed on `http://localhost:8080`
+- `web` is exposed on `http://localhost:3001`
+- uploaded public-form files are persisted under `./data/form_uploads`
+
+Recommended app env for local development outside Docker:
+
+```env
+APP_DB_HOST=127.0.0.1
+APP_DB_PORT=5432
+APP_DATABASE_URL=
+TURNSTILE_SECRET_KEY=
+```
+
+If you run the app outside Docker, point it at a reachable PostgreSQL host yourself. In Compose, the `web` service already uses the internal `postgres` hostname.
 
 ## Persistent data and paths
 
@@ -149,6 +203,11 @@ Default behavior:
 - `NOCODB_BASE_TITLE=Classroom MIS`
 - `NOCODB_INTEGRATION_TITLE=Classroom MIS PostgreSQL`
 - `NOCODB_SOURCE_ALIAS=Primary`
+
+Important:
+
+- the migrations in this repository currently create business tables in `public`
+- keep `APP_SCHEMA=public` unless you also update the SQL migrations to create tables in a different schema
 
 For local testing, this is enough:
 
@@ -291,6 +350,7 @@ Expected result includes:
 | Existing environment, app restart only | `docker compose up -d` | none | `postgres`, `redis`, and `nocodb` are `Up` |
 | Existing environment, changed SQL migrations | `docker compose run --rm migrate --wait --wait-timeout 120s --migrations-dir /db/migrations --no-dump-schema up` then `docker compose run --rm bootstrap` | none | New tables or columns appear in NocoDB after bootstrap completes |
 | Existing environment, changed only NocoDB metadata binding needs refresh | `docker compose run --rm bootstrap` | none | Base still points to schema `APP_SCHEMA` and tables are visible |
+| Existing environment, verify every writable table can create records through NocoDB | `bash scripts/test_nocodb_inserts.sh` | none | Script exits successfully after creating and cleaning up test records |
 | Update tracked schema snapshot after validated schema change | `bash scripts/update_schema_snapshot.sh` | Commit the updated snapshot file if you use git | `db/schema.snapshot.sql` matches the current business schema |
 | Check schema drift | `bash scripts/check_schema_drift.sh` | none | Command exits successfully with `No schema drift detected.` |
 | Reset a disposable local test environment | `docker compose down` then delete `data/` and run `docker compose up -d --build` | Only do this if you are okay deleting local bind-mounted data | Fresh stack recreates the schema, base, and sync state automatically |
@@ -347,7 +407,9 @@ Confirm all of the following:
   - `v_monthly_revenue`
   - `v_lead_conversion`
   - `v_dashboard_current`
+- the `Leads` table contains a curated `Lead Intake Form` view with only the intake fields shown
 - you can create and edit records from NocoDB
+- new or edited lead records are auto-trimmed by PostgreSQL and required lead fields cannot be blank after trimming
 - CSV/XLSX export works
 - normal users do not have schema-edit permissions
 
@@ -358,6 +420,14 @@ Create a new migration:
 ```bash
 docker compose run --rm migrate new add_something
 ```
+
+Generate a review-only draft from live schema drift when someone changed schema directly in PostgreSQL or NocoDB:
+
+```bash
+bash scripts/generate_migration_draft.sh add_something
+```
+
+This writes review-only files into `db/migration_drafts/`. It does not create or apply a real migration automatically.
 
 Apply migrations:
 
@@ -451,6 +521,8 @@ If startup fails, check these first:
 - `NC_ADMIN_EMAIL` and `NC_ADMIN_PASSWORD` are valid enough for NocoDB to create the admin user
 - `bootstrap` can sign in to `NOCODB_INTERNAL_URL`
 - `APP_SCHEMA` matches the schema created by migrations
+
+In the current repository state, that means `APP_SCHEMA` should stay `public`.
 
 If `bootstrap` fails, inspect:
 

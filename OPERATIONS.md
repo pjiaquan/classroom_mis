@@ -16,6 +16,7 @@ Use the same repository structure in both environments.
 - Apply all schema changes through SQL migrations only.
 - Test every new migration in `staging` before `production`.
 - Do not let normal users change tables or columns in production NocoDB.
+- Do not treat NocoDB public forms as the primary customer-facing intake surface if you need custom sanitization, uploads, or anti-spam controls.
 - Run schema drift checks before and after production deployments.
 - Backup PostgreSQL before destructive or high-risk migrations.
 

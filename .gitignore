@@ -15,3 +15,8 @@ data/**
 !data/redis/.gitkeep
 !data/nocodb/
 !data/nocodb/.gitkeep
+db/migration_drafts/*
+!db/migration_drafts/.gitkeep
+web/.next/
+web/node_modules/
+web/tsconfig.tsbuildinfo
