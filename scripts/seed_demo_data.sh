@@ -92,9 +92,15 @@ COUNTS_OUTPUT="$(
     SET search_path TO \"$APP_SCHEMA\", public;
     SELECT table_name || ':' || row_count
     FROM (
+      SELECT 'teachers' AS table_name, COUNT(*)::bigint AS row_count FROM teachers
+      UNION ALL
+      SELECT 'subjects', COUNT(*)::bigint FROM subjects
+      UNION ALL
       SELECT 'students' AS table_name, COUNT(*)::bigint AS row_count FROM students
       UNION ALL
       SELECT 'classes', COUNT(*)::bigint FROM classes
+      UNION ALL
+      SELECT 'tuition_fees', COUNT(*)::bigint FROM tuition_fees
       UNION ALL
       SELECT 'enrollments', COUNT(*)::bigint FROM enrollments
       UNION ALL
@@ -126,7 +132,21 @@ postgres_exec "
   BEGIN;
   SET LOCAL search_path TO \"$APP_SCHEMA\", public;
 
-  INSERT INTO students (
+  -- Seed teachers
+  INSERT INTO teachers (teacher_code, full_name, phone, email, status, notes)
+  VALUES
+    ('T001', '林雅婷', '0933000001', 'lin@example.com', 'active', 'Demo seed teacher - Math'),
+    ('T002', '張美華', '0933000002', 'zhang@example.com', 'active', 'Demo seed teacher - English'),
+    ('T003', '陳建志', '0933000003', 'chen@example.com', 'active', 'Demo seed teacher - Chinese');
+
+  -- Seed subjects
+  INSERT INTO subjects (subject_code, subject_name, description, status)
+  VALUES
+    ('MATH', '數學', '中小學數學培訓', 'active'),
+    ('ENG', '英文', '英語閱讀與會話', 'active'),
+    ('CHINESE', '作文', '中文寫作訓練', 'active');
+
+  -- Seed students
     student_code,
     full_name,
     grade,
@@ -148,16 +168,41 @@ postgres_exec "
     class_code,
     class_name,
     teacher_name,
+    teacher_id,
+    subject_id,
     schedule_text,
+    day_of_week,
+    start_time,
+    end_time,
+    room,
     capacity,
+    max_capacity,
     status,
     start_date,
     notes
   )
   VALUES
-    ('DEMO-CLS-001', '國小數學培訓班', '林老師', 'Tue 19:00-21:00', 12, 'open', (CURRENT_DATE - INTERVAL '70 day')::date, 'Demo seed class'),
-    ('DEMO-CLS-002', '國小英文閱讀班', '張老師', 'Sat 10:00-12:00', 10, 'open', (CURRENT_DATE - INTERVAL '45 day')::date, 'Demo seed class'),
-    ('DEMO-CLS-003', '國小作文衝刺班', '陳老師', 'Thu 18:30-20:30', 8, 'full', (CURRENT_DATE - INTERVAL '100 day')::date, 'Demo seed class');
+    ('DEMO-CLS-001', '國小數學培訓班', '林老師', 1, 1, 'Tue 19:00-21:00', 2, '19:00', '21:00', 'Room A', 12, 15, 'open', (CURRENT_DATE - INTERVAL '70 day')::date, 'Demo seed class'),
+    ('DEMO-CLS-002', '國小英文閱讀班', '張老師', 2, 2, 'Sat 10:00-12:00', 6, '10:00', '12:00', 'Room B', 10, 12, 'open', (CURRENT_DATE - INTERVAL '45 day')::date, 'Demo seed class'),
+    ('DEMO-CLS-003', '國小作文衝刺班', '陳老師', 3, 3, 'Thu 18:30-20:30', 4, '18:30', '20:30', 'Room A', 8, 10, 'full', (CURRENT_DATE - INTERVAL '100 day')::date, 'Demo seed class');
+
+  -- Seed tuition fees
+  INSERT INTO tuition_fees (class_id, fee_amount, fee_type, billing_cycle, effective_from, notes)
+  SELECT
+    c.id,
+    mapped.fee_amount,
+    mapped.fee_type,
+    mapped.billing_cycle,
+    mapped.effective_from,
+    mapped.notes
+  FROM (
+    VALUES
+      ('DEMO-CLS-001', 3200::numeric, 'monthly', 'monthly', (CURRENT_DATE - INTERVAL '70 day')::date, 'Demo seed tuition fee'),
+      ('DEMO-CLS-002', 2800::numeric, 'monthly', 'monthly', (CURRENT_DATE - INTERVAL '45 day')::date, 'Demo seed tuition fee'),
+      ('DEMO-CLS-003', 2600::numeric, 'monthly', 'monthly', (CURRENT_DATE - INTERVAL '100 day')::date, 'Demo seed tuition fee')
+  ) AS mapped(class_code, fee_amount, fee_type, billing_cycle, effective_from, notes)
+  JOIN classes c
+    ON c.class_code = mapped.class_code;
 
   INSERT INTO enrollments (
     student_id,
@@ -313,4 +358,4 @@ postgres_exec "
 "
 
 echo "Richer demo seed inserted into schema '$APP_SCHEMA'."
-echo "Seeded tables: students, classes, enrollments, attendance_sessions, attendance, payments, leads"
+echo "Seeded tables: teachers, subjects, students, classes, tuition_fees, enrollments, attendance_sessions, attendance, payments, leads"

@@ -123,6 +123,86 @@ services:
     networks:
       - backend
 
+  directus-db-setup:
+    image: postgres:16
+    container_name: classroom-mis-directus-db-setup
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required. Copy .env.example to .env and set POSTGRES_PASSWORD.}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required. Copy .env.example to .env and set POSTGRES_DB.}
+      POSTGRES_HOST: ${POSTGRES_HOST:?POSTGRES_HOST is required. Copy .env.example to .env and set POSTGRES_HOST.}
+      POSTGRES_PORT: ${POSTGRES_PORT:?POSTGRES_PORT is required. Copy .env.example to .env and set POSTGRES_PORT.}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required. Copy .env.example to .env and set POSTGRES_USER.}
+      DIRECTUS_POSTGRES_DB: ${DIRECTUS_POSTGRES_DB:-directus}
+    command:
+      - sh
+      - -lc
+      - |
+        DB_EXISTS=$$(psql -t -c "SELECT 1 FROM pg_database WHERE datname='$$DIRECTUS_POSTGRES_DB'" --host "$$POSTGRES_HOST" --port "$$POSTGRES_PORT" --username "$$POSTGRES_USER" --dbname "$$POSTGRES_DB")
+        if [ -z "$$DB_EXISTS" ]; then
+          psql --host "$$POSTGRES_HOST" --port "$$POSTGRES_PORT" --username "$$POSTGRES_USER" --dbname "$$POSTGRES_DB" -c "CREATE DATABASE $$DIRECTUS_POSTGRES_DB OWNER $$POSTGRES_USER"
+        fi
+    restart: "no"
+    networks:
+      - backend
+
+  directus:
+    image: directus/directus:latest
+    container_name: classroom-mis-directus
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      directus-db-setup:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      # Database - Directus creates its own tables with directus_ prefix
+      DB_CLIENT: pg
+      DB_HOST: ${POSTGRES_HOST:?POSTGRES_HOST is required. Copy .env.example to .env and set POSTGRES_HOST.}
+      DB_PORT: ${POSTGRES_PORT:?POSTGRES_PORT is required. Copy .env.example to .env and set POSTGRES_PORT.}
+      DB_DATABASE: ${DIRECTUS_POSTGRES_DB:-classroom_mis}
+      DB_USER: ${POSTGRES_USER:?POSTGRES_USER is required. Copy .env.example to .env and set POSTGRES_USER.}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required. Copy .env.example to .env and set POSTGRES_PASSWORD.}
+      # Security
+      SECRET: ${DIRECTUS_SECRET:?DIRECTUS_SECRET is required. Set a long random string.}
+      # Rate limiting (optional, adjust as needed)
+      RATE_LIMITER_ENABLED: ${DIRECTUS_RATE_LIMITER_ENABLED:-true}
+      RATE_LIMITER_POINTS: ${DIRECTUS_RATE_LIMITER_POINTS:-100}
+      RATE_LIMITER_DURATION: ${DIRECTUS_RATE_LIMITER_DURATION:-60}
+      # CORS - restrict in production
+      CORS_ENABLED: ${DIRECTUS_CORS_ENABLED:-true}
+      CORS_ORIGIN: ${DIRECTUS_CORS_ORIGIN:-*}
+      # Public URL for emails/links
+      PUBLIC_URL: ${DIRECTUS_PUBLIC_URL:-http://localhost:8081}
+      # Admin user - Directus creates this on first run
+      ADMIN_EMAIL: ${DIRECTUS_ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${DIRECTUS_ADMIN_PASSWORD:-}
+      # File storage
+      STORAGE_LOCATIONS: local
+      STORAGE_LOCAL_DRIVER: local
+      STORAGE_LOCAL_ROOT: /directus/uploads
+      # Server
+      PORT: 8080
+      # Misc
+      TZ: ${TZ:?TZ is required. Copy .env.example to .env and set TZ.}
+    volumes:
+      - directus-uploads:/directus/uploads
+      - directus-cache:/directus/.cache
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/server/health >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 20s
+    networks:
+      - backend
+
   nocodb:
     image: nocodb/nocodb:latest
     container_name: classroom-mis-nocodb
@@ -222,7 +302,7 @@ services:
     ports:
       - "3001:3000"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 3000 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -232,3 +312,7 @@ services:
 
 networks:
   backend:
+
+volumes:
+  directus-uploads:
+  directus-cache:

@@ -105,8 +105,15 @@ CREATE TABLE public.classes (
     class_code text NOT NULL,
     class_name text NOT NULL,
     teacher_name text NOT NULL,
+    teacher_id bigint,
+    subject_id bigint,
     schedule_text text NOT NULL,
+    day_of_week smallint,
+    start_time time without time zone,
+    end_time time without time zone,
+    room text,
     capacity integer NOT NULL,
+    max_capacity integer,
     status text DEFAULT 'open'::text NOT NULL,
     start_date date,
     end_date date,
@@ -334,6 +341,44 @@ CREATE SEQUENCE public.submission_files_id_seq
     NO MAXVALUE
     CACHE 1;
 ALTER SEQUENCE public.submission_files_id_seq OWNED BY public.submission_files.id;
+CREATE TABLE public.teachers (
+    id bigserial PRIMARY KEY,
+    teacher_code text NOT NULL UNIQUE,
+    full_name text NOT NULL,
+    phone text,
+    email text,
+    status text DEFAULT 'active' NOT NULL,
+    notes text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT teachers_status_check CHECK ((status = ANY (ARRAY['active'::text, 'inactive'::text, 'archived'::text])))
+);
+CREATE TABLE public.subjects (
+    id bigserial PRIMARY KEY,
+    subject_code text NOT NULL UNIQUE,
+    subject_name text NOT NULL,
+    description text,
+    status text DEFAULT 'active' NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT subjects_status_check CHECK ((status = ANY (ARRAY['active'::text, 'inactive'::text])))
+);
+CREATE TABLE public.tuition_fees (
+    id bigserial PRIMARY KEY,
+    class_id bigint,
+    subject_id bigint,
+    fee_amount numeric(10,2) NOT NULL,
+    fee_type text DEFAULT 'monthly' NOT NULL,
+    billing_cycle text DEFAULT 'monthly' NOT NULL,
+    effective_from date NOT NULL,
+    effective_to date,
+    notes text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT tuition_fees_amount_check CHECK ((fee_amount >= (0)::numeric)),
+    CONSTRAINT tuition_fees_fee_type_check CHECK ((fee_type = ANY (ARRAY['monthly'::text, 'per_session'::text, 'per_year'::text]))),
+    CONSTRAINT tuition_fees_billing_cycle_check CHECK ((billing_cycle = ANY (ARRAY['monthly'::text, 'quarterly'::text, 'yearly'::text])))
+);
 CREATE VIEW public.v_class_current_sizes AS
  SELECT c.id AS class_id,
     c.class_code,
@@ -459,6 +504,13 @@ CREATE INDEX idx_payments_status ON public.payments USING btree (status);
 CREATE INDEX idx_payments_student_id ON public.payments USING btree (student_id);
 CREATE INDEX idx_students_status ON public.students USING btree (status);
 CREATE INDEX idx_submission_files_submission_id ON public.submission_files USING btree (form_submission_id);
+CREATE INDEX idx_teachers_status ON public.teachers USING btree (status);
+CREATE INDEX idx_classes_teacher_id ON public.classes USING btree (teacher_id);
+CREATE INDEX idx_classes_subject_id ON public.classes USING btree (subject_id);
+CREATE INDEX idx_classes_day_of_week ON public.classes USING btree (day_of_week);
+CREATE INDEX idx_tuition_fees_class_id ON public.tuition_fees USING btree (class_id);
+CREATE INDEX idx_tuition_fees_subject_id ON public.tuition_fees USING btree (subject_id);
+CREATE INDEX idx_tuition_fees_effective ON public.tuition_fees USING btree (effective_from, effective_to);
 CREATE TRIGGER trg_attendance_sessions_updated_at BEFORE UPDATE ON public.attendance_sessions FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 CREATE TRIGGER trg_attendance_updated_at BEFORE UPDATE ON public.attendance FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 CREATE TRIGGER trg_classes_updated_at BEFORE UPDATE ON public.classes FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
@@ -472,10 +524,17 @@ CREATE TRIGGER trg_leads_updated_at BEFORE UPDATE ON public.leads FOR EACH ROW E
 CREATE TRIGGER trg_payments_updated_at BEFORE UPDATE ON public.payments FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 CREATE TRIGGER trg_students_updated_at BEFORE UPDATE ON public.students FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 CREATE TRIGGER trg_submission_files_updated_at BEFORE UPDATE ON public.submission_files FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+CREATE TRIGGER trg_teachers_updated_at BEFORE UPDATE ON public.teachers FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+CREATE TRIGGER trg_subjects_updated_at BEFORE UPDATE ON public.subjects FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+CREATE TRIGGER trg_tuition_fees_updated_at BEFORE UPDATE ON public.tuition_fees FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 ALTER TABLE ONLY public.attendance
     ADD CONSTRAINT attendance_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.attendance_sessions(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.attendance_sessions
     ADD CONSTRAINT attendance_sessions_class_id_fkey FOREIGN KEY (class_id) REFERENCES public.classes(id) ON DELETE RESTRICT;
+ALTER TABLE ONLY public.classes
+    ADD CONSTRAINT classes_teacher_id_fkey FOREIGN KEY (teacher_id) REFERENCES public.teachers(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.classes
+    ADD CONSTRAINT classes_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES public.subjects(id) ON DELETE SET NULL;
 ALTER TABLE ONLY public.attendance
     ADD CONSTRAINT attendance_student_id_fkey FOREIGN KEY (student_id) REFERENCES public.students(id) ON DELETE RESTRICT;
 ALTER TABLE ONLY public.enrollments
@@ -496,4 +555,8 @@ ALTER TABLE ONLY public.payments
     ADD CONSTRAINT payments_student_id_fkey FOREIGN KEY (student_id) REFERENCES public.students(id) ON DELETE RESTRICT;
 ALTER TABLE ONLY public.submission_files
     ADD CONSTRAINT submission_files_form_submission_id_fkey FOREIGN KEY (form_submission_id) REFERENCES public.form_submissions(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.tuition_fees
+    ADD CONSTRAINT tuition_fees_class_id_fkey FOREIGN KEY (class_id) REFERENCES public.classes(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.tuition_fees
+    ADD CONSTRAINT tuition_fees_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES public.subjects(id) ON DELETE SET NULL;
 onnect /d
